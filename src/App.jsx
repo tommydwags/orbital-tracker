@@ -1,1913 +1,1151 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithCustomToken, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { getAnalytics } from "firebase/analytics"; // Added for your config
-import {
-  Hammer,
-  ShoppingCart,
-  Database,
-  Plus,
-  Trash2,
-  Check,
-  Search,
-  Save,
-  Moon,
-  Sun,
-  AlertCircle,
-  Package,
-  ArrowRight,
-  Zap,
-  Activity,
-  Edit2,
-  X,
-  Filter,
-  ArrowUpDown,
-  Loader2,
-  Wifi,
-  WifiOff,
-  Minus,
-  Coins,
-  Weight,
-  Info,
-  Ship,
-  User,
-  Flag,
-  Tag,
-  Factory,
-  Settings,
-  Archive,
-  Calendar,
-  Layers,
-  BarChart3,
-  PieChart,
-  MapPin,
-  Globe,
-  Navigation,
-  Compass,
-  Orbit,
-  Mountain,
-  Disc,
-  AlertTriangle,
-  Download,
-  Upload,
-  RefreshCw,
-  Sparkles,
-  LogOut,
-  Lock
+/* --- MOBILE PWA SETUP INSTRUCTIONS ---
+  To make this look like a native app on iPhone (remove address bar, custom icon):
+  
+  1. Create an 'index.html' file in the 'public' folder (or edit existing one).
+  2. Paste this meta block into the <head>:
+     <meta name="apple-mobile-web-app-capable" content="yes">
+     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+     <title>Orbital: Video Game Tracker</title>
+  
+  3. Deploy using 'npm run build' and 'firebase deploy'.
+  4. Open in Safari -> Share -> "Add to Home Screen".
+*/
+
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { 
+  Book, Library, Plus, ChevronRight, ChevronLeft, PlayCircle, CheckCircle2, 
+  Circle, Clock, X, Trophy, Star, Edit2, Trash2, Activity, BookOpen, RotateCcw, 
+  Search, Monitor, Gamepad2, Smartphone, Tv, Settings, Image as ImageIcon, 
+  Timer, StopCircle, ListTodo, AlertTriangle, Glasses, Joystick, Cloud, Loader2,
+  PauseCircle, Play, Tag, Download, PieChart, Flame, Award, Globe, ExternalLink, Dices, LogOut, Lock
 } from 'lucide-react';
 
-// --- FIREBASE CONFIGURATION (Dual-Mode) ---
-const getFirebaseConfig = () => {
-  // A. Check for Canvas/Immersive Environment
-  try {
-    if (typeof __firebase_config !== 'undefined') {
-      return JSON.parse(__firebase_config);
-    }
-  } catch (e) {
-    console.error("Canvas config parse error", e);
-  }
+// --- FIREBASE IMPORTS ---
+import { initializeApp } from "firebase/app";
+import { 
+  getAuth, 
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut,
+  onAuthStateChanged 
+} from "firebase/auth";
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  onSnapshot, 
+  setDoc
+} from "firebase/firestore";
 
-  // B. Manual Config for Real/External Deployment
-  // UPDATED: Using your specific credentials
-  const manualConfig = {
-    apiKey: "AIzaSyD2pagm3feLw8KlmCoYFqZyKAE9_4erdUE",
-    authDomain: "starfield-logistics.firebaseapp.com",
-    projectId: "starfield-logistics",
-    storageBucket: "starfield-logistics.firebasestorage.app",
-    messagingSenderId: "59835681606",
-    appId: "1:59835681606:web:d4ce891481673f733b3347",
-    measurementId: "G-BJBBZQMVPE"
-  };
+// --- CONSTANTS ---
 
-  return manualConfig;
+const STATUS_COLORS = {
+  backlog: 'bg-slate-800 text-slate-400 border-slate-700',
+  playing: 'bg-indigo-900/50 text-indigo-300 border-indigo-700',
+  completed: 'bg-emerald-900/30 text-emerald-400 border-emerald-800',
+  shelved: 'bg-stone-900/50 text-stone-500 border-stone-800'
 };
 
-// Use the global app ID if in Canvas, otherwise use your project ID for the Firestore path
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'starfield-logistics';
-const firebaseConfig = getFirebaseConfig();
-
-let auth = null;
-let db = null;
-let analytics = null;
-
-if (firebaseConfig) {
-  try {
-      const app = initializeApp(firebaseConfig);
-      auth = getAuth(app);
-      db = getFirestore(app);
-      // Initialize analytics only if in a browser environment that supports it
-      if (typeof window !== 'undefined') {
-        analytics = getAnalytics(app);
-      }
-  } catch (err) {
-      console.error("Firebase Initialization Error:", err);
-  }
-}
-
-// --- MASTER DATA ---
-const INITIAL_SYSTEMS_DB = {
-    'Sol': [
-        { name: 'Mercury', moons: [] },
-        { name: 'Venus', moons: [] },
-        { name: 'Earth', moons: [{ name: 'Luna', environments: [] }] },
-        { name: 'Mars', moons: ['Phobos', 'Deimos'] },
-        { name: 'Jupiter', moons: ['Io', 'Europa', 'Ganymede', 'Callisto'] },
-        { name: 'Saturn', moons: [{ name: 'Titan', environments: ['Craters'] }, 'Enceladus'] },
-        { name: 'Uranus', moons: ['Miranda', 'Ariel', 'Umbriel', 'Titania', 'Oberon'] },
-        { name: 'Neptune', moons: ['Triton'] },
-        { name: 'Pluto', moons: ['Charon'] }
-    ],
-    'Alpha Centauri': [
-        { name: 'Jemison', moons: [] },
-        { name: 'Gagarin', moons: [] },
-        { name: 'Olivas', moons: ['Chawla', 'Zamka'] }
-    ],
-    'Cheyenne': [
-        { name: 'Akila', moons: ['Codos'] },
-        { name: 'Montara', moons: [] }
-    ],
-    'Volii': [
-        { name: 'Volii Alpha', moons: [] },
-        { name: 'Volii Epsilon', moons: [] }
-    ],
-    'Narion': [
-        { name: 'Niira', moons: [] },
-        { name: 'Sumati', moons: ['Andraphon'] },
-        { name: 'Vectera', moons: [] },
-        { name: 'Anselon', moons: ['Kreet', 'Vectera'] }
-    ],
-    'Kryx': [
-        { name: 'Suvorov', moons: [] },
-        { name: 'The Key', moons: [] }
-    ]
-};
-
-const MASTER_RESOURCE_DB = [
-  { id: 'al', name: 'Aluminum', type: 'Raw Inorganic', mass: 0.5, value: 7 },
-  { id: 'fe', name: 'Iron', type: 'Raw Inorganic', mass: 0.6, value: 8 },
-  { id: 'he3', name: 'Helium-3', type: 'Raw Inorganic', mass: 0.1, value: 5 },
-  { id: 'h2o', name: 'Water', type: 'Raw Inorganic', mass: 0.5, value: 4 },
-  { id: 'cu', name: 'Copper', type: 'Raw Inorganic', mass: 0.6, value: 10 },
-  { id: 'ni', name: 'Nickel', type: 'Raw Inorganic', mass: 0.6, value: 9 },
-  { id: 'pb', name: 'Lead', type: 'Raw Inorganic', mass: 0.7, value: 10 },
-  { id: 'u', name: 'Uranium', type: 'Raw Inorganic', mass: 0.6, value: 12 },
-  { id: 'ar', name: 'Argon', type: 'Raw Inorganic', mass: 0.5, value: 6 },
-  { id: 'c6hn', name: 'Benzene', type: 'Raw Inorganic', mass: 0.6, value: 7 },
-  { id: 'cl', name: 'Chlorine', type: 'Raw Inorganic', mass: 0.5, value: 6 },
-  { id: 'f', name: 'Fluorine', type: 'Raw Inorganic', mass: 0.5, value: 9 },
-  { id: 'w', name: 'Tungsten', type: 'Raw Inorganic', mass: 0.7, value: 14 },
-  { id: 'ti', name: 'Titanium', type: 'Raw Inorganic', mass: 0.5, value: 10 },
-  { id: 'co', name: 'Cobalt', type: 'Raw Inorganic', mass: 0.6, value: 11 },
-  { id: 'ag', name: 'Silver', type: 'Raw Inorganic', mass: 0.6, value: 18 },
-  { id: 'au', name: 'Gold', type: 'Raw Inorganic', mass: 0.8, value: 24 },
-  { id: 'pt', name: 'Platinum', type: 'Raw Inorganic', mass: 0.8, value: 24 },
-  { id: 'pu', name: 'Plutonium', type: 'Raw Inorganic', mass: 0.8, value: 64 },
-  { id: 'vyt', name: 'Vytinium', type: 'Raw Inorganic', mass: 1.2, value: 130 },
-  { id: 'ald', name: 'Aldumite', type: 'Raw Inorganic', mass: 1.0, value: 110 },
-  { id: 'ind', name: 'Indicite', type: 'Raw Inorganic', mass: 0.8, value: 105 },
-  { id: 'roth', name: 'Rothicite', type: 'Raw Inorganic', mass: 0.9, value: 108 },
-  { id: 'tas', name: 'Tasine', type: 'Raw Inorganic', mass: 0.5, value: 120 },
-  { id: 'ver', name: 'Veryl', type: 'Raw Inorganic', mass: 0.7, value: 115 },
-  { id: 'frame', name: 'Adaptive Frame', type: 'Manufactured', mass: 1.5, value: 25 },
-  { id: 'wire', name: 'Zero Wire', type: 'Manufactured', mass: 0.3, value: 35 },
-  { id: 'mag', name: 'Zero-G Gimbal', type: 'Manufactured', mass: 2.0, value: 85 },
-  { id: 'pos', name: 'Positron Battery', type: 'Manufactured', mass: 1.5, value: 110 },
-  { id: 'semi', name: 'Semimetal Wafer', type: 'Manufactured', mass: 1.2, value: 95 },
-  { id: 'rheo', name: 'Rheostat', type: 'Manufactured', mass: 0.4, value: 40 },
-  { id: 'iso', name: 'Isocentered Magnet', type: 'Manufactured', mass: 1.8, value: 65 },
-  { id: 'mag_pres', name: 'Mag Pressure Tank', type: 'Manufactured', mass: 2.5, value: 140 },
-  { id: 'mono', name: 'Monopropellant', type: 'Manufactured', mass: 1.0, value: 40 },
-  { id: 'poly', name: 'Polytextile', type: 'Manufactured', mass: 0.5, value: 45 },
-  { id: 'comm', name: 'Comm Relay', type: 'Manufactured', mass: 1.5, value: 30 },
-  { id: 'micro', name: 'Microsecond Regulator', type: 'Manufactured', mass: 0.5, value: 105 },
-  { id: 'sieve', name: 'Molecular Sieve', type: 'Manufactured', mass: 1.0, value: 90 },
-  { id: 'super_mag', name: 'Supercooled Magnet', type: 'Manufactured', mass: 2.0, value: 95 },
-  { id: 'tau', name: 'Tau Grade Rheostat', type: 'Manufactured', mass: 0.5, value: 80 },
-  { id: 'fuel_rod', name: 'Nuclear Fuel Rod', type: 'Manufactured', mass: 2.0, value: 160 },
-  { id: 'power', name: 'Power Circuit', type: 'Manufactured', mass: 0.6, value: 150 },
-  { id: 'ing_fe', name: 'Iron Ingot', type: 'Ingot', mass: 1.0, value: 25 },
-  { id: 'ing_al', name: 'Aluminum Ingot', type: 'Ingot', mass: 0.8, value: 22 },
-  { id: 'ing_cu', name: 'Copper Ingot', type: 'Ingot', mass: 1.0, value: 28 },
-  { id: 'ing_ni', name: 'Nickel Ingot', type: 'Ingot', mass: 1.0, value: 26 },
-  { id: 'ing_ti', name: 'Titanium Ingot', type: 'Ingot', mass: 0.8, value: 35 },
-  { id: 'ing_w', name: 'Tungsten Ingot', type: 'Ingot', mass: 1.2, value: 45 },
-  { id: 'ing_co', name: 'Cobalt Ingot', type: 'Ingot', mass: 1.0, value: 30 },
-  { id: 'ing_pt', name: 'Platinum Ingot', type: 'Ingot', mass: 1.2, value: 65 },
-  { id: 'bat_s', name: 'Small Battery', type: 'Manufactured', mass: 0.5, value: 50 },
-  { id: 'bat_m', name: 'Medium Battery', type: 'Manufactured', mass: 1.5, value: 150 },
-  { id: 'bat_l', name: 'Large Battery', type: 'Manufactured', mass: 4.0, value: 400 },
-  { id: 'seal', name: 'Sealant', type: 'Organic', mass: 0.1, value: 6 },
-  { id: 'adh', name: 'Adhesive', type: 'Organic', mass: 0.1, value: 8 },
-  { id: 'lub', name: 'Lubricant', type: 'Organic', mass: 0.1, value: 12 },
-  { id: 'tox', name: 'Toxin', type: 'Organic', mass: 0.1, value: 10 },
-  { id: 'fiber_root', name: 'Fiber (Root)', type: 'Flora', mass: 0.2, value: 4 },
-  { id: 'fiber_leaf', name: 'Fiber (Leaf)', type: 'Flora', mass: 0.1, value: 4 },
-  { id: 'fiber', name: 'Fiber (Processed)', type: 'Organic', mass: 0.1, value: 6 },
-  { id: 'nutrient', name: 'Nutrient', type: 'Flora', mass: 0.1, value: 5 },
-  { id: 'meta', name: 'Metabolic Agent', type: 'Flora', mass: 0.1, value: 8 },
-  { id: 'struc', name: 'Structural Material', type: 'Flora', mass: 0.3, value: 8 },
+const PLATFORMS = [
+  { value: 'PC', label: 'PC' },
+  { value: 'Xbox', label: 'Xbox' },
+  { value: 'PlayStation', label: 'PlayStation' },
+  { value: 'Switch', label: 'Nintendo Switch' },
+  { value: 'Mobile', label: 'Mobile / Tablet' },
+  { value: 'VR', label: 'VR Headset' },
+  { value: 'Retro', label: 'Retro Console' },
+  { value: 'Generic', label: 'Other' }
 ];
 
-const MASTER_BLUEPRINT_DB = [
-  { id: 'bp_solar', name: 'Solar Array', category: 'Power', ingredients: [{ resourceId: 'ing_al', count: 4 }, { resourceId: 'ing_cu', count: 2 }, { resourceId: 'semi', count: 2 }] },
-  { id: 'bp_wind', name: 'Wind Turbine', category: 'Power', ingredients: [{ resourceId: 'ing_al', count: 5 }, { resourceId: 'ing_ni', count: 3 }, { resourceId: 'ing_co', count: 2 }] },
-  { id: 'bp_ext_water', name: 'Water Extractor', category: 'Extraction', ingredients: [{ resourceId: 'ing_ni', count: 4 }, { resourceId: 'ing_fe', count: 3 }, { resourceId: 'membrane', count: 1 }] },
-  { id: 'bp_store_solid', name: 'Storage - Solid', category: 'Storage', ingredients: [{ resourceId: 'ing_al', count: 6 }, { resourceId: 'ing_fe', count: 3 }, { resourceId: 'frame', count: 2 }] },
-  { id: 'bp_turret_bal', name: 'Ballistic Turret Mk1', category: 'Defense', ingredients: [{ resourceId: 'ing_al', count: 4 }, { resourceId: 'ing_fe', count: 2 }, { resourceId: 'wire', count: 2 }] },
-  { id: 'bp_bench_ind', name: 'Industrial Workbench', category: 'Crafting', ingredients: [{ resourceId: 'ing_al', count: 4 }, { resourceId: 'ing_fe', count: 3 }] },
+const SESSION_TAGS = [
+    'Quest', 'Explore', 'Combat', 'Story', 'Build', 'Grind', 
+    'Ranked', 'Casual', 'PVP', 'Co-op', 'Event', 'Idle'
 ];
 
-const PRIORITIES = {
-  CRITICAL: { value: 3, label: 'Critical', color: 'text-red-500 border-red-500 bg-red-500/10' },
-  HIGH: { value: 2, label: 'High', color: 'text-orange-500 border-orange-500 bg-orange-500/10' },
-  STANDARD: { value: 1, label: 'Standard', color: 'text-blue-500 border-blue-500 bg-blue-500/10' },
-  LOW: { value: 0, label: 'Low', color: 'text-slate-500 border-slate-500 bg-slate-500/10' }
+const TAG_COLORS = {
+  Quest: 'bg-amber-900/30 text-amber-400 border-amber-800',
+  Explore: 'bg-sky-900/30 text-sky-400 border-sky-800',
+  Combat: 'bg-red-900/30 text-red-400 border-red-800',
+  Story: 'bg-purple-900/30 text-purple-400 border-purple-800',
+  Build: 'bg-emerald-900/30 text-emerald-400 border-emerald-800',
+  Grind: 'bg-slate-800 text-slate-400 border-slate-700',
+  Ranked: 'bg-violet-900/30 text-violet-400 border-violet-800',
+  Casual: 'bg-teal-900/30 text-teal-400 border-teal-800',
+  PVP: 'bg-rose-900/30 text-rose-400 border-rose-800',
+  'Co-op': 'bg-blue-900/30 text-blue-400 border-blue-800',
+  Event: 'bg-pink-900/30 text-pink-400 border-pink-800',
+  Idle: 'bg-slate-800 text-slate-500 border-slate-700'
 };
 
-const PROJECT_TYPES = ['Outpost', 'Ship Engineering', 'Research', 'Weaponry', 'Spacesuit', 'Logistics', 'Other'];
-const LOCATION_TYPES = ['Outpost', 'City', 'Settlement', 'Station', 'Wilderness', 'Mine'];
-
-const DEFAULT_STATE = {
-  resources: MASTER_RESOURCE_DB,
-  blueprints: MASTER_BLUEPRINT_DB,
-  systems: INITIAL_SYSTEMS_DB, 
-  projects: [],
-  nodes: [],
-  stash: {},
-  capacities: { ship: 1000, person: 135 }
+const TAG_CHART_COLORS = {
+  Quest: 'bg-amber-500',
+  Explore: 'bg-sky-500',
+  Combat: 'bg-red-500',
+  Story: 'bg-purple-500',
+  Build: 'bg-emerald-500',
+  Grind: 'bg-slate-500',
+  Ranked: 'bg-violet-500',
+  Casual: 'bg-teal-500',
+  PVP: 'bg-rose-500',
+  'Co-op': 'bg-blue-500',
+  Event: 'bg-pink-500',
+  Idle: 'bg-slate-600'
 };
 
-// --- HELPER UTILS ---
-const normalizePlanet = (p) => {
-    if (!p) return { name: 'Unknown', moons: [], environments: [] };
-    if (typeof p === 'string') return { name: p, moons: [], environments: [] };
-    return { 
-        name: p.name, 
-        moons: (p.moons || []).map(m => typeof m === 'string' ? { name: m, environments: [] } : m), 
-        environments: p.environments || [] 
-    };
+const TAG_TEXT_COLORS = {
+  Quest: 'text-amber-400',
+  Explore: 'text-sky-400',
+  Combat: 'text-red-400',
+  Story: 'text-purple-400',
+  Build: 'text-emerald-400',
+  Grind: 'text-slate-400',
+  Ranked: 'text-violet-400',
+  Casual: 'text-teal-400',
+  PVP: 'text-rose-400',
+  'Co-op': 'text-blue-400',
+  Event: 'text-pink-400',
+  Idle: 'text-slate-500'
 };
 
-// --- UI COMPONENTS ---
+// --- UTILS ---
 
-const Card = ({ children, className = "", theme, onClick }) => {
-  const themeStyle = theme === 'cockpit' 
-    ? "bg-slate-900/90 border border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.05)] text-amber-50" 
-    : "bg-white border border-slate-200 shadow-sm text-slate-800";
-  return <div onClick={onClick} className={`p-4 rounded-lg transition-all duration-300 relative overflow-hidden ${themeStyle} ${className}`}>{children}</div>;
+const formatDuration = (minutes) => {
+  if (!minutes && minutes !== 0) return '0m';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
 };
 
-const Button = ({ children, onClick, variant = 'primary', size = 'md', className = "", theme, disabled }) => {
-  const sizes = { sm: "px-2 py-1 text-xs", md: "px-4 py-2 text-sm", lg: "px-6 py-3 text-base" };
-  let themeColors = {};
-  if (theme === 'cockpit') {
-    themeColors = {
-      primary: "bg-amber-600 hover:bg-amber-500 text-black shadow-[0_0_10px_rgba(245,158,11,0.4)]",
-      secondary: "bg-transparent border border-amber-600 text-amber-500 hover:bg-amber-900/30",
-      danger: "bg-red-900/30 border border-red-500/50 text-red-400 hover:bg-red-900/50",
-      ghost: "text-amber-500 hover:bg-amber-900/20",
-      success: "bg-green-600 text-black border-green-600 hover:bg-green-500"
-    };
-  } else {
-    themeColors = {
-      primary: "bg-blue-600 hover:bg-blue-500 text-white shadow-sm",
-      secondary: "bg-white border border-slate-300 text-slate-700 hover:bg-slate-50",
-      danger: "bg-red-50 border border-red-200 text-red-600 hover:bg-red-100",
-      ghost: "text-slate-500 hover:bg-slate-100",
-      success: "bg-green-600 text-white hover:bg-green-500"
-    };
-  }
-  return <button onClick={onClick} className={`font-medium rounded transition-all duration-200 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${sizes[size]} ${themeColors[variant]} ${className}`} disabled={disabled}>{children}</button>;
+const formatTimer = (seconds) => {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 };
 
-const Input = ({ label, type = "text", value, onChange, placeholder, theme, className = "" }) => {
-  const inputStyle = theme === 'cockpit' ? "bg-slate-950 border-amber-700/50 text-amber-100 focus:border-amber-500" : "bg-white border-slate-300 text-slate-900 focus:border-blue-500";
-  return (
-    <div className={`flex flex-col gap-1 ${className}`}>
-      {label && <label className={`text-[10px] uppercase tracking-wider font-semibold ${theme === 'cockpit' ? "text-amber-400/80" : "text-slate-600"}`}>{label}</label>}
-      <input type={type} value={value} onChange={onChange} placeholder={placeholder} className={`w-full px-3 py-2 rounded border outline-none transition-colors ${inputStyle}`} />
-    </div>
-  );
+const getPlatformIcon = (platform) => {
+  const p = (platform || '').toLowerCase();
+  if (p.includes('pc') || p.includes('steam')) return <Monitor size={12} />;
+  if (p.includes('xbox')) return <Gamepad2 size={12} />;
+  if (p.includes('playstation') || p.includes('ps')) return <Gamepad2 size={12} />;
+  if (p.includes('switch') || p.includes('nintendo')) return <Smartphone size={12} />; 
+  if (p.includes('mobile') || p.includes('ios') || p.includes('android')) return <Smartphone size={12} />;
+  if (p.includes('vr') || p.includes('oculus') || p.includes('quest')) return <Glasses size={12} />;
+  if (p.includes('retro')) return <Joystick size={12} />;
+  return <Tv size={12} />;
 };
 
-const Badge = ({ children, theme, type = 'default' }) => {
-    let colors = theme === 'cockpit' ? "bg-amber-900/30 text-amber-400 border-amber-700/30" : "bg-slate-100 text-slate-700 border-slate-200";
-    if (type === 'CRITICAL') colors = theme === 'cockpit' ? "bg-red-900/40 text-red-400 border-red-500/40" : "bg-red-50 text-red-700 border-red-200";
-    return <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wide whitespace-nowrap border ${colors}`}>{children}</span>;
+// --- FIREBASE CONFIG ---
+const firebaseConfig = {
+  apiKey: "AIzaSyC7ijlnAsQwrzSOowjDZ36uAysFI8l8EWQ",
+  authDomain: "orbital-video-game-track-6d843.firebaseapp.com",
+  projectId: "orbital-video-game-track-6d843",
+  storageBucket: "orbital-video-game-track-6d843.firebasestorage.app",
+  messagingSenderId: "82673473462",
+  appId: "1:82673473462:web:9e9cf11d2b3e982c889317",
+  measurementId: "G-70VXPENBZE"
 };
 
-const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel, theme }) => {
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className={`w-full max-w-sm p-6 rounded-xl shadow-2xl relative ${theme === 'cockpit' ? 'bg-slate-950 border border-amber-600 text-amber-50' : 'bg-white text-slate-800'}`}>
-        <div className="mb-4"><h3 className="text-lg font-bold mb-2">{title}</h3><p className="text-sm opacity-80">{message}</p></div>
-        <div className="flex justify-end gap-2"><Button theme={theme} variant="secondary" onClick={onCancel}>Cancel</Button><Button theme={theme} variant="danger" onClick={onConfirm}>Confirm</Button></div>
-      </div>
-    </div>
-  );
-};
+const appId = 'orbit-app'; 
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
-const LoginView = ({ onLogin }) => (
-  <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center relative overflow-hidden">
-    {/* Starfield-esque background decoration */}
-    <div className="absolute inset-0 pointer-events-none opacity-20 bg-[linear-gradient(rgba(18,16,10,0)_50%,rgba(0,0,0,0.1)_50%)] bg-[length:100%_4px]" />
-    
-    <div className="relative z-10 max-w-sm w-full bg-slate-900/80 backdrop-blur-md border border-amber-500/30 p-8 rounded-xl shadow-[0_0_50px_rgba(245,158,11,0.1)]">
-      <div className="flex justify-center mb-6">
-        <div className="w-20 h-20 bg-amber-500/10 rounded-full flex items-center justify-center border border-amber-500/50 animate-pulse">
-           <Zap size={40} className="text-amber-500" />
-        </div>
-      </div>
-      
-      <h1 className="text-3xl font-black text-white uppercase tracking-widest mb-2">Constellation</h1>
-      <p className="text-amber-500/60 text-xs font-mono uppercase tracking-widest mb-8">Logistics & Companion System</p>
-      
-      <div className="space-y-4">
-        <button 
-          onClick={onLogin}
-          className="w-full bg-amber-600 hover:bg-amber-500 text-black font-bold py-4 rounded-lg flex items-center justify-center gap-3 transition-all active:scale-95 shadow-lg shadow-amber-900/20"
-        >
-           <Globe size={20} /> Authenticate Pilot
-        </button>
-        <div className="text-[10px] text-slate-500 font-mono uppercase">
-           <Lock size={10} className="inline mr-1" /> Security Clearance Required
-        </div>
-      </div>
-    </div>
-  </div>
-);
 
 // --- SUB-COMPONENTS ---
 
-const OverviewView = ({ appData, theme, setActiveTab }) => {
-    const expProjects = appData.projects.filter(p => !p.completed && p.isExpedition);
-    const activeProjects = appData.projects.filter(p => !p.completed);
-    
-    // Calculate Dashboard Stats
-    let readiness = 100;
-    let totalMassNeeded = 0;
-    let totalCostNeeded = 0;
-    const typeDistribution = {};
-    const priorityCounts = { CRITICAL: 0, HIGH: 0, STANDARD: 0, LOW: 0 };
-
-    if (activeProjects.length > 0) {
-        let totalN = 0, totalH = 0;
-        activeProjects.forEach(p => {
-            const prio = p.priority || 'STANDARD';
-            priorityCounts[prio] = (priorityCounts[prio] || 0) + 1;
-
-            p.ingredients.forEach(i => {
-                const res = appData.resources.find(r => r.id === i.resourceId);
-                const needed = Math.max(0, i.count - i.current);
-                
-                if (p.isExpedition) {
-                    totalN += i.count;
-                    totalH += i.current;
-                }
-
-                if (needed > 0 && res) {
-                    totalMassNeeded += needed * res.mass;
-                    totalCostNeeded += needed * res.value;
-                    const type = res.type || 'Other';
-                    typeDistribution[type] = (typeDistribution[type] || 0) + needed;
-                }
-            });
-        });
-        if (expProjects.length > 0) readiness = totalN === 0 ? 100 : Math.round((totalH / totalN) * 100);
-    }
-
-    let color = readiness > 80 ? 'text-green-500' : readiness > 40 ? 'text-amber-500' : 'text-red-500';
-    
-    const sortedDistribution = Object.entries(typeDistribution).sort((a,b) => b[1] - a[1]).slice(0, 4); 
-
+const LoginView = ({ onLogin }) => {
     return (
-        <div className="space-y-4 pb-20 animate-in fade-in">
-            {/* TOP ROW */}
-            <div className="grid grid-cols-3 gap-2">
-                <Card theme={theme} className="col-span-1 flex flex-col items-center justify-center py-2">
-                    <div className="text-[9px] font-bold uppercase opacity-50 mb-1">Projected Cost</div>
-                    <div className="text-sm font-mono font-bold text-yellow-500">{totalCostNeeded.toLocaleString()}</div>
-                    <div className="text-[8px] opacity-40">Credits</div>
-                </Card>
-                <Card theme={theme} className="col-span-1 flex flex-col items-center justify-center p-0 overflow-hidden relative">
-                      <div className={`absolute inset-0 flex items-center justify-center`}><svg className="w-full h-full -rotate-90" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" strokeWidth="8" className={`${color} opacity-10`} /><circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" strokeWidth="8" strokeDasharray={`${readiness * 2.51} 251`} className={`${color} transition-all duration-1000 ease-out`} /></svg></div>
-                      <div className={`text-xl font-bold font-mono z-10 ${color}`}>{readiness}%</div>
-                      <div className="text-[7px] uppercase font-bold tracking-widest opacity-60 z-10 mt-1">Readiness</div>
-                </Card>
-                <Card theme={theme} className="col-span-1 flex flex-col items-center justify-center py-2">
-                    <div className="text-[9px] font-bold uppercase opacity-50 mb-1">Total Mass Load</div>
-                    <div className="text-sm font-mono font-bold text-blue-500">{totalMassNeeded.toFixed(0)}</div>
-                    <div className="text-[8px] opacity-40">Kilograms</div>
-                </Card>
+        <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 relative overflow-hidden">
+            {/* Background ambient effects */}
+            <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
+                <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-indigo-600/10 rounded-full blur-3xl"></div>
+                <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-emerald-600/10 rounded-full blur-3xl"></div>
             </div>
 
-            {/* SUPPLY CHAIN */}
-            <Card theme={theme}>
-                <div className="flex justify-between items-center mb-3">
-                    <h3 className="text-xs font-bold uppercase flex items-center gap-2"><BarChart3 size={14}/> Supply Chain Demand</h3>
-                </div>
-                {sortedDistribution.length > 0 ? (
-                    <div className="space-y-2">
-                        {sortedDistribution.map(([type, count]) => {
-                            const total = Object.values(typeDistribution).reduce((a,b)=>a+b,0);
-                            const pct = (count / total) * 100;
-                            return (
-                                <div key={type} className="flex items-center gap-2 text-xs">
-                                    <div className="w-24 truncate opacity-70">{type}</div>
-                                    <div className={`flex-1 h-1.5 rounded-full overflow-hidden ${theme==='cockpit'?'bg-slate-800':'bg-slate-200'}`}><div className={`h-full ${theme==='cockpit'?'bg-amber-600':'bg-blue-600'}`} style={{width: `${pct}%`}}/></div>
-                                    <div className="w-8 text-right font-mono opacity-50">{count}</div>
-                                </div>
-                            )
-                        })}
+            <div className="relative z-10 w-full max-w-sm text-center">
+                <div className="flex justify-center mb-6">
+                    <div className="relative">
+                        <div className="w-20 h-20 bg-gradient-to-tr from-indigo-600 to-emerald-500 rounded-2xl rotate-3 shadow-2xl flex items-center justify-center">
+                            <Gamepad2 size={40} className="text-white -rotate-3" />
+                        </div>
+                        <div className="absolute -bottom-2 -right-2 w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center border border-slate-800">
+                             <Activity size={16} className="text-emerald-400" />
+                        </div>
                     </div>
-                ) : (
-                    <div className="text-center py-4 text-xs opacity-50">No active resource demands.</div>
-                )}
-            </Card>
-
-            {/* PRIORITY */}
-            <Card theme={theme} className="flex flex-col gap-2">
-                <div className="flex justify-between items-center border-b border-opacity-10 border-current pb-1"><h3 className="text-xs font-bold uppercase flex items-center gap-2"><Activity size={14}/> Mission Priority</h3></div>
-                <div className="grid grid-cols-4 gap-2 text-center">
-                    <div><div className="text-lg font-bold text-red-500">{priorityCounts.CRITICAL}</div><div className="text-[8px] uppercase opacity-50">Crit</div></div>
-                    <div><div className="text-lg font-bold text-orange-500">{priorityCounts.HIGH}</div><div className="text-[8px] uppercase opacity-50">High</div></div>
-                    <div><div className="text-lg font-bold text-blue-500">{priorityCounts.STANDARD}</div><div className="text-[8px] uppercase opacity-50">Std</div></div>
-                    <div><div className="text-lg font-bold opacity-50">{priorityCounts.LOW}</div><div className="text-[8px] uppercase opacity-50">Low</div></div>
                 </div>
-            </Card>
-            
-            <div className="grid grid-cols-2 gap-4">
-                <Button theme={theme} variant="secondary" onClick={() => setActiveTab('projects')}><Hammer size={16}/> View Missions</Button>
-                <Button theme={theme} variant="secondary" onClick={() => setActiveTab('manifest')}><ShoppingCart size={16}/> View Manifest</Button>
+                
+                <h1 className="text-4xl font-black text-white tracking-tight mb-2">Orbital</h1>
+                <p className="text-slate-400 text-sm mb-12">The ultimate companion for your gaming journey.</p>
+
+                <div className="space-y-4">
+                    <button 
+                        onClick={onLogin}
+                        className="w-full bg-white text-slate-900 font-bold py-4 rounded-xl flex items-center justify-center gap-3 hover:bg-slate-100 transition-colors shadow-lg shadow-white/5 active:scale-95"
+                    >
+                        <svg className="w-5 h-5" viewBox="0 0 24 24">
+                            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                        </svg>
+                        Sign in with Google
+                    </button>
+                    
+                    <div className="text-[10px] text-slate-600 max-w-[200px] mx-auto leading-relaxed">
+                        By signing in, your collection will sync across all your devices.
+                    </div>
+                </div>
             </div>
         </div>
     );
 };
 
-const ProjectsView = ({ appData, theme, setModalOpen, setModalType, setEditProjectData, deleteProject, completeProject }) => {
-    const [filterType, setFilterType] = useState('All');
-    
-    const activeProjects = appData.projects.filter(p => !p.completed).sort((a, b) => {
-        const pA = PRIORITIES[a.priority || 'STANDARD'].value;
-        const pB = PRIORITIES[b.priority || 'STANDARD'].value;
-        return pB - pA;
+const ActiveSessionBar = ({ session, gameTitle, elapsedTime, onPause, onResume, onStop }) => {
+  if (!session) return null;
+  const isPaused = session.status === 'paused';
+
+  return (
+    <div className={`fixed top-0 left-0 right-0 z-[60] p-3 flex justify-between items-center shadow-lg animate-in slide-in-from-top duration-300 ${isPaused ? 'bg-amber-600' : 'bg-indigo-600'} text-white safe-area-pt`}>
+      <div className="flex items-center gap-3">
+        <div className={`p-1.5 rounded-full ${isPaused ? 'bg-white/20' : 'animate-pulse bg-white/20'}`}>
+          <Timer size={16} />
+        </div>
+        <div>
+          <div className="text-[10px] font-bold opacity-80 uppercase tracking-wider">{isPaused ? 'Session Paused' : 'Session Active'}</div>
+          <div className="text-sm font-bold leading-none truncate max-w-[120px] sm:max-w-[200px]">{gameTitle || 'Loading...'}</div>
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="font-mono text-lg font-bold tabular-nums">{formatTimer(elapsedTime)}</div>
+        {isPaused ? (
+           <button onClick={onResume} className="bg-white text-amber-600 p-2 rounded-full hover:scale-105 transition-transform shadow-sm"><Play size={20} fill="currentColor" /></button>
+        ) : (
+           <button onClick={onPause} className="bg-white/20 text-white p-2 rounded-full hover:scale-105 transition-transform shadow-sm"><PauseCircle size={20} /></button>
+        )}
+        <button onClick={onStop} className={`p-2 rounded-full hover:scale-105 transition-transform shadow-sm ${isPaused ? 'bg-white/20 text-white' : 'bg-white text-indigo-600'}`}>
+            <div className="w-5 h-5 flex items-center justify-center">
+                <div className="w-3 h-3 bg-current rounded-sm"></div>
+            </div>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const CalendarWidget = ({ logs, date, onDateChange, onDayClick }) => {
+  const currentMonth = date.getMonth();
+  const currentYear = date.getFullYear();
+  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+  const startDay = new Date(currentYear, currentMonth, 1).getDay(); 
+  
+  const playedDays = useMemo(() => {
+    const map = {};
+    logs.forEach(log => {
+      const d = new Date(log.date);
+      if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
+        const day = d.getDate();
+        if (!map[day]) map[day] = [];
+        map[day].push(log);
+      }
     });
-    
-    const completedProjects = appData.projects.filter(p => p.completed).sort((a, b) => b.completedAt - a.completedAt);
-    const filtered = activeProjects.filter(p => filterType === 'All' || p.type === filterType);
+    return map;
+  }, [logs, currentMonth, currentYear]);
 
-    return (
-      <div className="space-y-4 pb-20">
-        <div className="flex flex-col gap-3">
-            <div className="flex justify-between items-center"><h2 className={`text-xl font-bold uppercase tracking-widest ${theme === 'cockpit' ? 'text-amber-500' : 'text-slate-800'}`}>Mission Log</h2><Button theme={theme} onClick={() => { setEditProjectData(null); setModalType('addProject'); setModalOpen(true); }}><Plus size={16} /> New</Button></div>
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide"><button onClick={() => setFilterType('All')} className={`px-3 py-1 text-xs font-bold uppercase rounded border ${filterType === 'All' ? (theme==='cockpit'?'bg-amber-600 text-black border-amber-600':'bg-blue-600 text-white') : 'opacity-50'}`}>All</button>{PROJECT_TYPES.map(t => (<button key={t} onClick={() => setFilterType(t)} className={`px-3 py-1 text-xs font-bold uppercase rounded border whitespace-nowrap ${filterType === t ? (theme==='cockpit'?'bg-amber-600 text-black border-amber-600':'bg-blue-600 text-white') : 'opacity-50'}`}>{t}</button>))}</div>
+  return (
+    <div className="bg-slate-900 rounded-xl p-4 border border-slate-800 shadow-sm">
+      <div className="flex items-center justify-between mb-4">
+        <button onClick={() => onDateChange(-1)} className="p-1 hover:bg-slate-800 rounded text-slate-400"><ChevronLeft size={16} /></button>
+        <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">{date.toLocaleString('default', { month: 'long', year: 'numeric' })}</h3>
+        <button onClick={() => onDateChange(1)} className="p-1 hover:bg-slate-800 rounded text-slate-400"><ChevronRight size={16} /></button>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-center">
+        {['S','M','T','W','T','F','S'].map((d, i) => <div key={i} className="text-[10px] text-slate-600 font-bold mb-1">{d}</div>)}
+        {Array(startDay).fill(null).map((_, i) => <div key={`empty-${i}`} />)}
+        {Array(daysInMonth).fill(null).map((_, i) => {
+          const day = i + 1;
+          const hasLogs = playedDays[day];
+          return (
+            <button key={day} onClick={() => hasLogs && onDayClick(new Date(currentYear, currentMonth, day), playedDays[day])} disabled={!hasLogs} className={`aspect-square rounded-md flex items-center justify-center text-xs font-medium transition-all relative ${hasLogs ? 'bg-indigo-600 text-white shadow-indigo-500/20 shadow-md hover:scale-110 cursor-pointer' : 'bg-slate-800/50 text-slate-600 cursor-default'}`}>
+              {day}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const NavBar = ({ view, setView, onAdd }) => (
+  <div className="fixed bottom-0 left-0 right-0 bg-slate-950/90 backdrop-blur-xl border-t border-slate-800 p-2 pb-6 flex justify-between items-center z-50 px-6 safe-area-pb">
+    <button onClick={() => setView('overview')} className={`flex flex-col items-center gap-1 transition-colors active:scale-95 ${view === 'overview' ? 'text-indigo-400' : 'text-slate-500'}`}><Activity size={24} /><span className="text-[10px] font-bold uppercase tracking-wide">Overview</span></button>
+    <button onClick={() => setView('journal')} className={`flex flex-col items-center gap-1 transition-colors active:scale-95 ${view === 'journal' ? 'text-indigo-400' : 'text-slate-500'}`}><BookOpen size={24} /><span className="text-[10px] font-bold uppercase tracking-wide">Journal</span></button>
+    <button onClick={onAdd} className="bg-indigo-600 p-3 rounded-full shadow-xl shadow-indigo-500/40 text-white border-4 border-slate-950 hover:scale-105 active:scale-95 transition-transform -mt-6"><Plus size={28} /></button>
+    <button onClick={() => setView('library')} className={`flex flex-col items-center gap-1 transition-colors active:scale-95 ${view === 'library' ? 'text-indigo-400' : 'text-slate-500'}`}><Library size={24} /><span className="text-[10px] font-bold uppercase tracking-wide">Library</span></button>
+  </div>
+);
+
+// --- VIEW COMPONENTS ---
+
+const OverviewView = ({ games, logs, stats, calendarDate, setCalendarDate, onDayClick, setView, setActiveGameId, onOpenSettings }) => {
+  const playingGames = games.filter(g => g.status === 'playing');
+
+  // Calculate Tag Stats for Breakdown
+  const tagStats = useMemo(() => {
+    const stats = {};
+    logs.forEach(l => {
+        if(l.tags) {
+            l.tags.forEach(t => {
+                stats[t] = (stats[t] || 0) + 1;
+            });
+        }
+    });
+    return Object.entries(stats).sort((a,b) => b[1] - a[1]);
+  }, [logs]);
+
+  // Calculate Fun Stats
+  const funStats = useMemo(() => {
+     let longestSession = 0;
+     logs.forEach(l => { if(l.durationMinutes > longestSession) longestSession = l.durationMinutes });
+     
+     const platforms = {};
+     games.forEach(g => { platforms[g.platform] = (platforms[g.platform] || 0) + 1 });
+     const topPlatform = Object.entries(platforms).sort((a,b) => b[1] - a[1])[0]?.[0] || '-';
+
+     return { longestSession, topPlatform };
+  }, [logs, games]);
+
+  return (
+    <div className="pb-24 animate-in fade-in duration-500">
+      <header className="pt-16 pb-6 px-6 bg-gradient-to-b from-slate-900 to-slate-950 flex justify-between items-center">
+        <div>
+            <h1 className="text-3xl font-black text-white tracking-tight mb-1">Orbital</h1>
+            <div className="flex items-center gap-2">
+                <p className="text-slate-400 text-xs font-bold uppercase tracking-wider">Video Game Tracker</p>
+                <div className="h-1 w-1 rounded-full bg-slate-700"></div>
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+            </div>
         </div>
+        <button onClick={onOpenSettings} className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white transition-colors"><Settings size={20} /></button>
+      </header>
+
+      {/* Main Stats Grid */}
+      <section className="px-6 mb-6 grid grid-cols-2 gap-3">
+        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1 flex items-center gap-1"><Clock size={10} /> Total Playtime</div><div className="text-2xl font-black text-white">{stats.totalHours}<span className="text-sm font-medium text-slate-500 ml-1">hrs</span></div></div>
+        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800"><div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1 flex items-center gap-1"><Trophy size={10} /> Games Completed</div><div className="text-2xl font-black text-emerald-400">{stats.completedGames}</div></div>
         
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {filtered.map(project => {
-             const canComplete = project.ingredients.every(i => i.current >= i.count);
-             return (
-                <Card key={project.id} theme={theme} className="group">
-                   <div className="flex justify-between items-start mb-2">
-                      <div><h3 className="font-bold text-lg">{project.name}</h3><div className="flex gap-2 mt-1"><Badge theme={theme} type={project.priority}>{project.priority}</Badge>{project.isExpedition && <Badge theme={theme} type="CRITICAL">EXPEDITION</Badge>}</div></div>
-                      <div className="flex gap-1">
-                          <button onClick={() => { setEditProjectData(project); setModalType('addProject'); setModalOpen(true); }} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:text-blue-400"><Edit2 size={16}/></button>
-                          <button onClick={() => deleteProject(project)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-500"><Trash2 size={16}/></button>
-                      </div>
-                   </div>
-                   <div className="space-y-3 mt-4">{project.ingredients.map(ing => { const res = appData.resources.find(r => r.id === ing.resourceId); const percent = Math.min(100, (ing.current / ing.count) * 100); return (<div key={ing.resourceId} className="space-y-1"><div className="flex justify-between text-xs font-mono opacity-80"><span>{res?.name || ing.resourceId}</span><span>{ing.current} / {ing.count}</span></div><div className={`h-1.5 rounded-full overflow-hidden ${theme==='cockpit'?'bg-slate-800':'bg-slate-200'}`}><div className={`h-full transition-all duration-500 ${theme==='cockpit'?'bg-amber-500':'bg-blue-600'}`} style={{width: `${percent}%`}} /></div></div>); })}</div>
-                   {canComplete && (<div className="mt-4 pt-4 border-t border-opacity-10 border-current"><Button theme={theme} variant="success" className="w-full" onClick={() => completeProject(project)}><Check size={16}/> Complete Mission</Button></div>)}
-                </Card>
-             )
-          })}
-          {filtered.length === 0 && <div className="text-center py-12 opacity-50">No projects found.</div>}
+        {/* Fun Stats Row */}
+        <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 flex flex-col justify-center">
+            <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1 flex items-center gap-1"><Flame size={10} /> Longest Session</div>
+            <div className="text-lg font-bold text-slate-200">{formatDuration(funStats.longestSession)}</div>
         </div>
+        <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 flex flex-col justify-center">
+             <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1 flex items-center gap-1"><Award size={10} /> Top Platform</div>
+             <div className="text-lg font-bold text-slate-200 truncate">{funStats.topPlatform}</div>
+        </div>
+      </section>
 
-        {completedProjects.length > 0 && (
-            <div className="mt-8">
-                <div className="flex items-center gap-2 mb-4 opacity-50 font-bold uppercase text-xs tracking-widest"><Archive size={14}/> Mission Archive</div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 opacity-60">
-                    {completedProjects.map(p => (
-                        <Card key={p.id} theme={theme} className="flex justify-between items-center py-3">
-                            <div><div className="font-bold line-through">{p.name}</div><div className="text-[10px] flex items-center gap-1"><Calendar size={10}/> {new Date(p.completedAt).toLocaleDateString()}</div></div>
-                            <div className="text-xs border px-2 py-1 rounded border-green-500/30 text-green-500">COMPLETED</div>
-                        </Card>
-                    ))}
+      {/* Playstyle Breakdown (Moved here) */}
+      {tagStats.length > 0 && (
+        <section className="px-6 mb-8">
+            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800">
+                <div className="flex items-center gap-2 mb-3 text-[10px] uppercase font-bold text-slate-500"><PieChart size={12} /> Playstyle Breakdown</div>
+                <div className="flex h-2 w-full rounded-full overflow-hidden bg-slate-950 mb-3">
+                    {tagStats.map(([tag, count]) => {
+                        const total = tagStats.reduce((a,b) => a + b[1], 0);
+                        const width = (count / total) * 100;
+                        const colorClass = TAG_CHART_COLORS[tag] || 'bg-slate-500';
+                        return <div key={tag} style={{ width: `${width}%` }} className={colorClass} title={`${tag}: ${count}`} />;
+                    })}
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-2">
+                    {tagStats.slice(0, 6).map(([tag, count]) => {
+                        const total = tagStats.reduce((a,b) => a + b[1], 0);
+                        const percent = Math.round((count / total) * 100);
+                        const textClass = TAG_TEXT_COLORS[tag] || 'text-slate-400';
+                        return (
+                            <div key={tag} className={`text-[10px] font-bold ${textClass} flex items-center gap-1.5`}>
+                                <div className={`w-1.5 h-1.5 rounded-full ${TAG_CHART_COLORS[tag]}`}></div>
+                                {tag} {percent}%
+                            </div>
+                        )
+                    })}
+                </div>
+            </div>
+        </section>
+      )}
+
+      {playingGames.length > 0 && (
+        <section className="px-6 mb-8">
+          <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Currently Playing</h2>
+          <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide -mx-6 px-6">
+            {playingGames.map(game => (
+              <div key={game.id} onClick={() => { setActiveGameId(game.id); setView('game-detail'); }} className="flex-shrink-0 w-40 h-56 bg-slate-800 rounded-xl border border-slate-700 relative overflow-hidden group active:scale-95 transition-all shadow-lg cursor-pointer">
+                {game.coverUrl ? <img src={game.coverUrl} alt={game.title} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" /> : <div className={`w-full h-full bg-slate-800 flex items-center justify-center`}><Gamepad2 size={32} className="text-slate-600"/></div>}
+                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent p-4 flex flex-col justify-end"><h3 className="font-bold text-white leading-tight line-clamp-2 text-sm">{game.title}</h3></div>
+                {game.completedDate && <div className="absolute top-2 right-2 text-yellow-500 bg-black/50 p-1.5 rounded-full backdrop-blur-sm"><Trophy size={12} /></div>}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Calendar moved to bottom */}
+      <section className="px-6 mb-8">
+        <CalendarWidget logs={logs} date={calendarDate} onDateChange={(delta) => { const newDate = new Date(calendarDate); newDate.setMonth(newDate.getMonth() + delta); setCalendarDate(newDate); }} onDayClick={onDayClick} />
+      </section>
+
+    </div>
+  );
+};
+
+const JournalView = ({ logs, games, onEdit, onDelete, setView, setActiveGameId }) => {
+  const [tagFilter, setTagFilter] = useState('All');
+  
+  const sortedLogs = useMemo(() => {
+      let filtered = logs;
+      if (tagFilter !== 'All') {
+          filtered = logs.filter(l => l.tags && l.tags.includes(tagFilter));
+      }
+      return filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [logs, tagFilter]);
+
+  const tagStats = useMemo(() => {
+      const stats = {};
+      logs.forEach(l => {
+          if(l.tags) {
+              l.tags.forEach(t => {
+                  stats[t] = (stats[t] || 0) + 1;
+              });
+          }
+      });
+      return Object.entries(stats).sort((a,b) => b[1] - a[1]);
+  }, [logs]);
+
+  return (
+    <div className="pb-24 min-h-screen bg-slate-950 animate-in fade-in duration-300">
+      <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-md pt-16 pb-4 px-6 border-b border-slate-800">
+        <div className="flex items-center justify-between mb-4"><h1 className="text-2xl font-black text-white">Journal</h1><div className="text-slate-500 text-xs font-mono">{sortedLogs.length} ENTRIES</div></div>
+        
+        {tagStats.length > 0 && (
+            <div className="mb-4">
+                <div className="flex items-center gap-2 mb-2 text-[10px] uppercase font-bold text-slate-500"><PieChart size={12} /> Playstyle Breakdown</div>
+                <div className="flex h-2 w-full rounded-full overflow-hidden bg-slate-800">
+                    {tagStats.map(([tag, count]) => {
+                        const total = tagStats.reduce((a,b) => a + b[1], 0);
+                        const width = (count / total) * 100;
+                        const colorClass = TAG_CHART_COLORS[tag] || 'bg-slate-500';
+                        return <div key={tag} style={{ width: `${width}%` }} className={colorClass} title={`${tag}: ${count}`} />;
+                    })}
+                </div>
+                <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">
+                    {tagStats.slice(0, 4).map(([tag, count]) => {
+                        const total = tagStats.reduce((a,b) => a + b[1], 0);
+                        const percent = Math.round((count / total) * 100);
+                        const textClass = TAG_TEXT_COLORS[tag] || 'text-slate-400';
+                        return (
+                            <div key={tag} className={`text-[10px] font-bold ${textClass} flex items-center gap-1`}>
+                                <div className={`w-1.5 h-1.5 rounded-full ${TAG_CHART_COLORS[tag]}`}></div>
+                                {tag} {percent}%
+                            </div>
+                        )
+                    })}
                 </div>
             </div>
         )}
+
+        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+            <button onClick={() => setTagFilter('All')} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-colors ${tagFilter === 'All' ? 'bg-white text-black' : 'bg-slate-900 border border-slate-800 text-slate-400'}`}>All</button>
+            {SESSION_TAGS.map(tag => (
+                <button key={tag} onClick={() => setTagFilter(tag)} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-colors ${tagFilter === tag ? 'bg-indigo-600 text-white' : 'bg-slate-900 border border-slate-800 text-slate-400'}`}>{tag}</button>
+            ))}
+        </div>
+      </header>
+      <div className="p-6">
+         <div className="space-y-6 border-l-2 border-slate-800 ml-2 pl-6 relative">
+          {sortedLogs.length === 0 ? <div className="text-slate-600 text-sm italic py-4">No entries found.</div> : sortedLogs.map(log => {
+              const game = games.find(g => g.id === log.gameId);
+              if (!game) return null;
+              return (
+                <div key={log.id} className="relative group">
+                  <div className="absolute -left-[31px] top-1 w-3 h-3 rounded-full bg-slate-600 border-2 border-slate-900"></div>
+                  <div className="mb-1 flex items-baseline justify-between">
+                    <span onClick={() => { setActiveGameId(game.id); setView('game-detail'); }} className="text-indigo-400 font-bold text-sm hover:underline cursor-pointer">{game.title}</span>
+                    <span className="text-xs text-slate-500 flex items-center gap-2">{log.durationMinutes > 0 && <span className="flex items-center gap-1 text-slate-400 bg-slate-800 px-1.5 rounded"><Clock size={10} /> {formatDuration(log.durationMinutes)}</span>}{new Date(log.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                  </div>
+                  <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-800 relative">
+                    <div className="flex gap-1 flex-wrap mb-2">
+                        {log.tags && log.tags.map(t => <span key={t} className={`text-[10px] px-1.5 py-0.5 rounded border ${TAG_COLORS[t] || TAG_COLORS.Idle}`}>{t}</span>)}
+                    </div>
+                    <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">{log.content}</p>
+                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+                        <button type="button" onClick={() => onEdit(log)} className="p-1 bg-slate-700 rounded text-slate-300 hover:text-white"><Edit2 size={12} /></button>
+                        <button type="button" onClick={() => onDelete(log.id)} className="p-1 bg-slate-700 rounded text-slate-300 hover:text-red-500"><Trash2 size={12} /></button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+        </div>
       </div>
-    );
+    </div>
+  );
 };
 
-const NodesView = ({ appData, theme, setModalOpen, setModalType, setEditNodeData, deleteNode }) => {
-    const [search, setSearch] = useState('');
-    const [sortBy, setSortBy] = useState('name');
-    const [showOptimizer, setShowOptimizer] = useState(false);
-    const [optimizedRoute, setOptimizedRoute] = useState([]);
-    const [missingResources, setMissingResources] = useState([]);
+const LibraryView = ({ games, logs, setView, setActiveGameId, search, setSearch, sort, setSort, filter, setFilter }) => {
+  const getMinutes = useCallback((id) => logs.filter(l => l.gameId === id).reduce((acc, l) => acc + (l.durationMinutes || 0), 0), [logs]);
+  const filtered = useMemo(() => {
+    return games.filter(g => {
+        if (filter !== 'all' && g.status !== filter) return false;
+        if (search && !g.title.toLowerCase().includes(search.toLowerCase())) return false;
+        return true;
+      }).sort((a, b) => {
+        if (sort === 'alpha') return a.title.localeCompare(b.title);
+        if (sort === 'time') return getMinutes(b.id) - getMinutes(a.id);
+        if (sort === 'rating') return b.rating - a.rating;
+        return new Date(b.addedDate) - new Date(a.addedDate);
+      });
+  }, [games, filter, search, sort, getMinutes]);
 
-    // Improved Weighted Optimizer with Missing Resource Detection
-    const calculateRoute = () => {
-        const needsMap = {}; // ResourceID -> QuantityNeeded
-        appData.projects.filter(p => !p.completed).forEach(p => {
-            p.ingredients.forEach(i => {
-                const diff = Math.max(0, i.count - i.current);
-                if (diff > 0) needsMap[i.resourceId] = (needsMap[i.resourceId] || 0) + diff;
-            });
-        });
-
-        const neededRes = new Set(Object.keys(needsMap));
-        if (neededRes.size === 0) { 
-            setOptimizedRoute([]); 
-            setMissingResources([]);
-            return; 
-        }
-
-        let remainingNeeds = new Set(neededRes);
-        const route = [];
-        const availableNodes = [...appData.nodes];
-
-        // Greedy loop with weighting
-        while (remainingNeeds.size > 0 && availableNodes.length > 0) {
-            let bestNode = null;
-            let bestScore = -1;
-            let bestCovered = [];
-
-            availableNodes.forEach(node => {
-                const covered = node.resources.filter(r => remainingNeeds.has(r));
-                if (covered.length === 0) return;
-
-                // --- WEIGHTED SCORING ---
-                let score = 0;
-                
-                // 1. Quantity Weight: Prioritize nodes that yield resources we need A LOT of
-                covered.forEach(r => {
-                    const qtyNeeded = needsMap[r] || 0;
-                    score += 10 + (qtyNeeded * 0.5); // Base 10 per resource + bonus for quantity
-                });
-
-                // 2. Cluster Bonus: Prioritize nodes in same System or Planet as previously picked nodes
-                // (This minimizes Grav Jumps in the final plan)
-                if (route.length > 0) {
-                    const lastNode = route[route.length - 1];
-                    if (node.system === lastNode.system) score += 5;
-                    if (node.planet === lastNode.planet) score += 8;
-                }
-
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestNode = node;
-                    bestCovered = covered;
-                }
-            });
-
-            if (bestNode) {
-                route.push({ ...bestNode, gathered: bestCovered });
-                bestCovered.forEach(r => remainingNeeds.delete(r));
-                // Remove used node to prevent duplicates
-                const idx = availableNodes.findIndex(n => n.id === bestNode.id);
-                availableNodes.splice(idx, 1);
-            } else {
-                break;
-            }
-        }
-        
-        // Final Sort: Group by System -> Planet to make the flight plan logical
-        route.sort((a,b) => a.system.localeCompare(b.system) || a.planet.localeCompare(b.planet));
-        
-        // Calculate missing
-        const missing = Array.from(remainingNeeds).map(id => appData.resources.find(r => r.id === id)?.name || id);
-
-        setOptimizedRoute(route);
-        setMissingResources(missing);
-        setShowOptimizer(true);
-    };
-
-    const filteredNodes = (appData.nodes || []).filter(node => {
-        const query = search.toLowerCase();
-        const basicMatch = node.name.toLowerCase().includes(query) || node.system.toLowerCase().includes(query) || node.planet.toLowerCase().includes(query);
-        if (basicMatch) return true;
-        const resMatch = node.resources.some(rId => {
-            const r = appData.resources.find(res => res.id === rId);
-            return r && r.name.toLowerCase().includes(query);
-        });
-        return resMatch;
-    }).sort((a,b) => {
-        if (sortBy === 'name') return a.name.localeCompare(b.name);
-        if (sortBy === 'system') return a.system.localeCompare(b.system) || a.planet.localeCompare(b.planet);
-        if (sortBy === 'planet') return a.planet.localeCompare(b.planet);
-        if (sortBy === 'type') return a.type.localeCompare(b.type);
-        return 0;
-    });
-
-    return (
-        <div className="space-y-4 pb-20">
-            {showOptimizer ? (
-                <Card theme={theme} className="border-l-4 border-green-500 animate-in fade-in slide-in-from-top-4">
-                    <div className="flex justify-between items-center mb-3">
-                        <h3 className="font-bold uppercase text-xs flex items-center gap-2"><Compass size={16}/> Flight Plan (Optimized)</h3>
-                        <Button size="sm" variant="ghost" onClick={() => setShowOptimizer(false)}><X size={14}/></Button>
-                    </div>
-                    {optimizedRoute.length > 0 ? (
-                        <div className="space-y-3">
-                            {optimizedRoute.map((stop, idx) => (
-                                <div key={idx} className="flex gap-3 text-sm">
-                                    <div className={`font-mono font-bold opacity-50`}>0{idx+1}</div>
-                                    <div className="flex-1">
-                                        <div className="font-bold">{stop.name} 
-                                            <span className="opacity-60 text-xs font-normal ml-1">
-                                                ({stop.system} - {stop.planet}
-                                                {stop.environment && <span className="ml-1 border-l pl-1 border-current opacity-80 text-amber-500">{stop.environment}</span>}
-                                                )
-                                            </span>
-                                        </div>
-                                        <div className="text-xs opacity-70 mt-1">
-                                            Target: {stop.gathered.map(rId => appData.resources.find(r=>r.id===rId)?.name).join(', ')}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="text-sm opacity-60">No route nodes found covering needed resources.</div>
-                    )}
-                    
-                    {/* Missing Resources Section */}
-                    {missingResources.length > 0 && (
-                        <div className="mt-4 pt-3 border-t border-current border-opacity-10">
-                            <div className="flex items-center gap-2 text-xs font-bold uppercase text-red-500 mb-2"><AlertTriangle size={12} /> Still Missing</div>
-                            <div className="flex flex-wrap gap-1">
-                                {missingResources.map(r => (
-                                    <span key={r} className={`text-[10px] px-2 py-0.5 rounded border ${theme==='cockpit'?'border-red-900 bg-red-900/20 text-red-400':'border-red-200 bg-red-50 text-red-700'}`}>
-                                        {r}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                </Card>
-            ) : (
-                <div className="flex gap-2">
-                    <Button theme={theme} variant="secondary" className="flex-1" onClick={calculateRoute}><Navigation size={16}/> Calculate Optimal Route</Button>
-                </div>
-            )}
-
-            <div className="flex gap-2 mt-4 items-center">
-                <Input theme={theme} placeholder="Search Systems or Resources..." value={search} onChange={(e) => setSearch(e.target.value)} className="flex-1" />
-                <div className="w-24">
-                      <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className={`w-full p-2.5 text-xs rounded outline-none ${theme==='cockpit'?'bg-slate-950 border border-amber-700':'bg-white border-slate-300'}`}>
-                          <option value="name">Name</option>
-                          <option value="system">System</option>
-                          <option value="planet">Planet</option>
-                          <option value="type">Type</option>
-                      </select>
-                </div>
-                <Button theme={theme} onClick={() => { setEditNodeData(null); setModalType('addNode'); setModalOpen(true); }}><Plus size={16}/></Button>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredNodes.map(node => (
-                    <Card key={node.id} theme={theme} className="relative group">
-                        <div className="flex justify-between items-start mb-2">
-                            <div>
-                                <h3 className="font-bold text-lg">{node.name}</h3>
-                                <div className="flex items-center gap-2 text-xs opacity-70 mt-1">
-                                    <Globe size={12} /> {node.system} <ArrowRight size={8} /> {node.planet}
-                                    {node.environment && <span className="opacity-70 border-l pl-2 border-current">{node.environment}</span>}
-                                </div>
-                                <div className="mt-1"><Badge theme={theme} type="default">{node.type}</Badge></div>
-                            </div>
-                            <div className="flex gap-1">
-                                <button onClick={() => { setEditNodeData(node); setModalType('addNode'); setModalOpen(true); }} className="p-2 opacity-0 group-hover:opacity-100 hover:text-blue-400"><Edit2 size={16}/></button>
-                                <button onClick={() => deleteNode(node.id)} className="p-2 opacity-0 group-hover:opacity-100 hover:text-red-400"><Trash2 size={16}/></button>
-                            </div>
-                        </div>
-                        <div className="border-t border-current border-opacity-10 pt-3 mt-3">
-                            <div className="text-[10px] font-bold uppercase opacity-50 mb-2">Resources</div>
-                            <div className="flex flex-wrap gap-2">
-                                {node.resources.map(rId => {
-                                    const r = appData.resources.find(res => res.id === rId);
-                                    return <span key={rId} className={`px-2 py-1 rounded text-xs border ${theme==='cockpit'?'bg-slate-900 border-amber-900 text-amber-500':'bg-slate-100 border-slate-200'}`}>{r?.name || rId}</span>
-                                })}
-                            </div>
-                        </div>
-                    </Card>
-                ))}
-                {filteredNodes.length === 0 && <div className="col-span-full text-center py-12 opacity-50">No locations tracked.</div>}
-            </div>
-        </div>
-    );
-};
-
-const ManifestView = ({ appData, theme, handleLoot, handleStashUpdate }) => {
-    const [tab, setTab] = useState('acquisition'); 
-    const [metric, setMetric] = useState('mass');
-    const [editingStashId, setEditingStashId] = useState(null);
-    const [tempStashQty, setTempStashQty] = useState(0);
-    const [editingAcqId, setEditingAcqId] = useState(null);
-    const [tempAcqQty, setTempAcqQty] = useState(0);
-    const [stashAddId, setStashAddId] = useState('');
-    const [stashAddQty, setStashAddQty] = useState(1);
-    const [filterType, setFilterType] = useState('All');
-    
-    const allRes = useMemo(() => [...appData.resources].sort((a,b) => a.name.localeCompare(b.name)), [appData.resources]);
-    const types = ['All', ...new Set(appData.resources.map(r => r.type))].sort();
-    
-    const filteredDropdownRes = allRes.filter(r => filterType === 'All' || r.type === filterType);
-    
-    useEffect(() => {
-        if (filteredDropdownRes.length > 0) {
-            if (!filteredDropdownRes.find(r => r.id === stashAddId)) {
-                setStashAddId(filteredDropdownRes[0].id);
-            }
-        } else {
-            setStashAddId('');
-        }
-    }, [filterType, filteredDropdownRes, stashAddId]);
-
-    const needs = {};
-    const allocated = {};
-    appData.projects.filter(p => !p.completed).forEach(p => {
-        p.ingredients.forEach(i => {
-            needs[i.resourceId] = (needs[i.resourceId] || 0) + i.count;
-            allocated[i.resourceId] = (allocated[i.resourceId] || 0) + i.current;
-        });
-    });
-
-    const list = Object.keys(needs).map(id => {
-        const r = appData.resources.find(x => x.id === id);
-        return {
-            id, name: r?.name || id,
-            needed: needs[id], owned: allocated[id] || 0,
-            mass: r?.mass || 0, val: r?.value || 0,
-            type: r?.type || 'Unknown'
-        };
-    })
-    .filter(i => i.owned < i.needed)
-    .filter(i => filterType === 'All' || i.type === filterType)
-    .sort((a,b) => a.name.localeCompare(b.name));
-
-    const stashList = Object.entries(appData.stash).map(([id, qty]) => {
-        const r = appData.resources.find(x => x.id === id);
-        return { id, name: r?.name || id, qty, mass: r?.mass || 0, type: r?.type || 'Unknown' };
-    })
-    .filter(i => i.qty > 0)
-    .filter(i => filterType === 'All' || i.type === filterType)
-    .sort((a,b) => a.name.localeCompare(b.name));
-
-    const massInCargo = Object.keys(needs).reduce((acc, id) => {
-        const r = appData.resources.find(x => x.id === id);
-        return acc + ((allocated[id] || 0) * (r?.mass || 0));
-    }, 0) + Object.entries(appData.stash).reduce((acc, [id, qty]) => {
-        const r = appData.resources.find(x => x.id === id);
-        return acc + (qty * (r?.mass || 0));
-    }, 0);
-    
-    const capacity = appData.capacities.ship + appData.capacities.person;
-    const isOver = massInCargo > capacity;
-
-    const startEditStash = (id, currentQty) => { setEditingStashId(id); setTempStashQty(currentQty); };
-    const saveStashEdit = (id) => { handleStashUpdate(id, tempStashQty); setEditingStashId(null); };
-
-    const startEditAcq = (id, currentOwned) => { setEditingAcqId(id); setTempAcqQty(currentOwned); };
-    const saveAcqEdit = (id, currentOwned) => { 
-        const delta = tempAcqQty - currentOwned; 
-        if (delta !== 0) handleLoot(id, delta); 
-        setEditingAcqId(null); 
-    };
-
-    return (
-        <div className="space-y-6 pb-20">
-            <Card theme={theme} className={`py-4 text-center border-l-4 ${metric === 'mass' ? 'border-l-blue-500' : 'border-l-yellow-500'}`}>
-                <div className="text-xs font-bold uppercase opacity-60 mb-1">{metric === 'mass' ? 'Logistics Load' : 'Est. Purchase Cost'}</div>
-                <div className={`text-3xl font-mono font-bold ${metric === 'credits' ? 'text-yellow-500' : ''}`}>
-                    {metric === 'mass' ? massInCargo.toFixed(1) : list.reduce((a,b) => a + (Math.max(0,b.needed-b.owned)*b.val), 0).toLocaleString()}
-                    <span className="text-sm opacity-50 ml-1">{metric === 'mass' ? 'kg' : 'Cr'}</span>
-                </div>
-                {metric === 'mass' && (<div className="mt-2 text-[10px] uppercase font-bold"><span className={isOver ? 'text-red-500' : 'text-green-500'}>{massInCargo.toFixed(1)} / {capacity} kg</span></div>)}
-            </Card>
-            <div className="flex border-b border-opacity-20 border-current">
-                <button onClick={() => setTab('acquisition')} className={`flex-1 pb-2 text-xs font-bold uppercase tracking-widest ${tab==='acquisition' ? (theme==='cockpit'?'text-amber-500 border-b-2 border-amber-500':'text-blue-600 border-b-2 border-blue-600') : 'opacity-40'}`}>Acquisition</button>
-                <button onClick={() => setTab('inventory')} className={`flex-1 pb-2 text-xs font-bold uppercase tracking-widest ${tab==='inventory' ? (theme==='cockpit'?'text-amber-500 border-b-2 border-amber-500':'text-blue-600 border-b-2 border-blue-600') : 'opacity-40'}`}>Inventory</button>
-            </div>
-            
-            {/* Global Filter for both tabs */}
-            <div className="flex justify-between items-center mb-2">
-                <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className={`text-xs p-1 rounded ${theme==='cockpit'?'bg-slate-950 border-amber-700':'bg-white border-slate-300'}`}>{types.map(t => <option key={t} value={t}>{t}</option>)}</select>
-                {tab === 'acquisition' && (
-                    <div className="flex bg-current/10 p-1 rounded">
-                        <button onClick={() => setMetric('mass')} className={`px-3 py-1 text-[10px] uppercase font-bold rounded ${metric==='mass'?(theme==='cockpit'?'bg-amber-600 text-black':'bg-blue-600 text-white'):'opacity-50'}`}>Mass</button>
-                        <button onClick={() => setMetric('credits')} className={`px-3 py-1 text-[10px] uppercase font-bold rounded ${metric==='credits'?(theme==='cockpit'?'bg-yellow-600 text-black':'bg-yellow-600 text-white'):'opacity-50'}`}>Credits</button>
-                    </div>
-                )}
-            </div>
-
-            {tab === 'acquisition' && (
-                <div className="space-y-2">
-                    {list.map(i => {
-                        return (
-                            <Card key={i.id} theme={theme} className="flex items-center justify-between p-3">
-                                <div className="flex-1">
-                                    <div className="font-bold text-sm">{i.name}</div>
-                                    <div className="text-[10px] font-mono opacity-60">{metric === 'mass' ? `${i.mass} kg` : `${i.val} Cr`} / unit</div>
-                                </div>
-                                <div className="flex items-center gap-4">
-                                    <div className="text-right cursor-pointer group" onClick={() => startEditAcq(i.id, i.owned)}>
-                                        <div className="text-[9px] uppercase font-bold opacity-50">Owned / Need</div>
-                                        {editingAcqId === i.id ? (
-                                            <div className="flex items-center gap-1">
-                                                <input 
-                                                    autoFocus
-                                                    onClick={(e) => e.stopPropagation()}
-                                                    type="number" 
-                                                    value={tempAcqQty} 
-                                                    onChange={(e) => setTempAcqQty(parseInt(e.target.value) || 0)}
-                                                    className={`w-12 p-0.5 text-center text-sm rounded ${theme==='cockpit'?'bg-slate-950 border-amber-500':'bg-white border-slate-300'} border`}
-                                                />
-                                                <button onClick={(e) => { e.stopPropagation(); saveAcqEdit(i.id, i.owned); }} className="text-green-500"><Check size={14}/></button>
-                                            </div>
-                                        ) : (
-                                            <div className="font-mono font-bold text-sm group-hover:text-blue-500 flex items-center justify-end gap-1">
-                                                {i.owned} / {i.needed} <Edit2 size={10} className="opacity-0 group-hover:opacity-50"/>
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                        <button onClick={() => handleLoot(i.id, 1)} className={`w-6 h-6 flex items-center justify-center rounded ${theme==='cockpit'?'bg-slate-800 hover:bg-green-900/50':'bg-slate-200 hover:bg-green-100'}`}><Plus size={12}/></button>
-                                        <button onClick={() => handleLoot(i.id, -1)} className={`w-6 h-6 flex items-center justify-center rounded ${theme==='cockpit'?'bg-slate-800 hover:bg-red-900/50':'bg-slate-200 hover:bg-red-100'}`}><Minus size={12}/></button>
-                                    </div>
-                                </div>
-                            </Card>
-                        );
-                    })}
-                    {list.length === 0 && <div className="text-center opacity-50 py-8 text-sm">No pending acquisitions for active projects.</div>}
-                </div>
-            )}
-            
-            {tab === 'inventory' && (
-                <div className="space-y-4">
-                    <Card theme={theme} className="p-3 bg-current/5 border-l-4 border-l-slate-500">
-                        <div className="text-xs font-bold uppercase opacity-70 mb-2">Add to Stash</div>
-                        <div className="flex gap-2">
-                            <select value={stashAddId} onChange={(e) => setStashAddId(e.target.value)} className={`flex-1 p-2 rounded text-sm outline-none ${theme==='cockpit'?'bg-slate-950 border border-amber-800':'bg-white border-slate-300'}`}>
-                                {filteredDropdownRes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                            </select>
-                            <input type="number" value={stashAddQty} onChange={(e) => setStashAddQty(parseInt(e.target.value)||1)} className={`w-16 p-2 rounded text-sm outline-none ${theme==='cockpit'?'bg-slate-950 border border-amber-800':'bg-white border-slate-300'}`} />
-                            <Button theme={theme} onClick={() => { handleLoot(stashAddId, stashAddQty, true); setStashAddQty(1); }}><Plus size={16}/></Button>
-                        </div>
-                    </Card>
-                    <div className="space-y-2">
-                        {stashList.map(i => (
-                            <Card key={i.id} theme={theme} className="flex justify-between items-center p-3">
-                                <div><div className="font-bold text-sm">{i.name}</div><div className="text-[10px] opacity-60 font-mono">{(i.qty * i.mass).toFixed(1)} kg</div></div>
-                                <div className="flex items-center gap-3">
-                                    {editingStashId === i.id ? (
-                                        <div className="flex items-center gap-1"><input autoFocus type="number" value={tempStashQty} onChange={(e) => setTempStashQty(parseInt(e.target.value) || 0)} className={`w-16 p-1 text-center rounded ${theme==='cockpit'?'bg-slate-950 border-amber-500':'bg-white border-slate-300'} border`} /><button onClick={() => saveStashEdit(i.id)} className="text-green-500"><Check size={16}/></button></div>
-                                    ) : (
-                                        <div className="flex items-center gap-2 group cursor-pointer" onClick={() => startEditStash(i.id, i.qty)}><span className="font-mono font-bold text-lg">{i.qty}</span><Edit2 size={12} className="opacity-0 group-hover:opacity-50" /></div>
-                                    )}
-                                </div>
-                            </Card>
-                        ))}
-                        {stashList.length === 0 && <div className="text-center opacity-50 py-8 text-sm">Stash is empty (or filtered out).</div>}
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-};
-
-// Helper wrapper for DB view to keep main clean
-const DatabaseViewWrapper = ({ appData, theme, setModalOpen, setModalType, setEditBlueprintData, updateResource, updateBlueprint, deleteBlueprint, deleteResource, renameSystem, deleteSystem, addPlanet, deletePlanet, addEnvironment, deleteEnvironment, addMoon, deleteMoon, addMoonEnvironment, deleteMoonEnvironment }) => {
-    const [viewMode, setViewMode] = useState('resources'); 
-    const [search, setSearch] = useState('');
-    const [filterType, setFilterType] = useState('All');
-    const [editId, setEditId] = useState(null);
-    const [editForm, setEditForm] = useState({});
-    
-    // Systems Editor State
-    const [newSysName, setNewSysName] = useState('');
-    const [expandedSys, setExpandedSys] = useState(null);
-    const [expandedPlanet, setExpandedPlanet] = useState(null); 
-    const [expandedMoon, setExpandedMoon] = useState(null);
-    const [newPlanetName, setNewPlanetName] = useState('');
-    const [newEnvName, setNewEnvName] = useState('');
-    const [newMoonName, setNewMoonName] = useState('');
-    const [newMoonEnvName, setNewMoonEnvName] = useState('');
-    
-    // Resource Logic
-    const resTypes = ['All', ...new Set(appData.resources.map(r => r.type))].sort();
-    const filteredRes = appData.resources
-        .filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
-        .filter(r => filterType === 'All' || r.type === filterType)
-        .sort((a,b) => a.name.localeCompare(b.name));
-    
-    // Blueprint Logic
-    const bpCats = ['All', ...new Set(appData.blueprints.map(b => b.category))].sort();
-    const filteredBps = appData.blueprints
-        .filter(b => b.name.toLowerCase().includes(search.toLowerCase()))
-        .filter(b => filterType === 'All' || b.category === filterType)
-        .sort((a,b) => a.name.localeCompare(b.name));
-
-    // Systems Logic
-    const systemsList = Object.keys(appData.systems).sort();
-
-    const saveResEdit = () => { updateResource(editId, editForm); setEditId(null); };
-
-    return (
-        <div className="space-y-4 pb-20">
-            <div className="flex gap-2 mb-2">
-                <button onClick={() => { setViewMode('resources'); setFilterType('All'); }} className={`flex-1 py-2 text-xs font-bold uppercase rounded border ${viewMode==='resources' ? (theme==='cockpit'?'bg-amber-600 text-black border-amber-600':'bg-blue-600 text-white') : 'opacity-50'}`}>Resources</button>
-                <button onClick={() => { setViewMode('blueprints'); setFilterType('All'); }} className={`flex-1 py-2 text-xs font-bold uppercase rounded border ${viewMode==='blueprints' ? (theme==='cockpit'?'bg-amber-600 text-black border-amber-600':'bg-blue-600 text-white') : 'opacity-50'}`}>Blueprints</button>
-                <button onClick={() => setViewMode('systems')} className={`flex-1 py-2 text-xs font-bold uppercase rounded border ${viewMode==='systems' ? (theme==='cockpit'?'bg-amber-600 text-black border-amber-600':'bg-blue-600 text-white') : 'opacity-50'}`}>Systems</button>
-            </div>
-            
-            {viewMode !== 'systems' && (
-                <div className="flex gap-2">
-                    <Input theme={theme} placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} className="flex-1" />
-                    <div className="w-1/3">
-                        <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className={`w-full h-full px-2 rounded text-xs outline-none ${theme==='cockpit'?'bg-slate-950 border border-amber-800':'bg-white border-slate-300'}`}>
-                            {(viewMode === 'resources' ? resTypes : bpCats).map(t => <option key={t} value={t}>{t}</option>)}
-                        </select>
-                    </div>
-                    <Button theme={theme} onClick={() => { setModalType(viewMode === 'resources' ? 'addResource' : 'addBlueprint'); setModalOpen(true); }}><Plus size={16}/></Button>
-                </div>
-            )}
-
-            {viewMode === 'resources' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {filteredRes.map(r => (
-                        <Card key={r.id} theme={theme} className="relative">
-                            {editId === r.id ? (
-                                <div className="animate-in fade-in duration-200">
-                                    <div className="flex justify-between items-center mb-2"><span className="font-bold text-sm">{r.name}</span><div className="flex gap-1"><button onClick={saveResEdit} className="p-1 rounded bg-green-500/20 text-green-500"><Check size={16}/></button><button onClick={() => setEditId(null)} className="p-1 rounded bg-red-500/20 text-red-500"><X size={16}/></button></div></div>
-                                    <div className="grid grid-cols-2 gap-2"><div><label className="text-[9px] uppercase font-bold opacity-50">Mass</label><input type="number" step="0.1" value={editForm.mass} onChange={(e) => setEditForm({...editForm, mass: parseFloat(e.target.value)})} className={`w-full p-1 text-xs rounded border ${theme==='cockpit'?'bg-slate-950 border-amber-800':'bg-white border-slate-300'}`} /></div><div><label className="text-[9px] uppercase font-bold opacity-50">Value</label><input type="number" value={editForm.value} onChange={(e) => setEditForm({...editForm, value: parseInt(e.target.value)})} className={`w-full p-1 text-xs rounded border ${theme==='cockpit'?'bg-slate-900 border-amber-800':'bg-white border-slate-300'}`} /></div></div>
-                                    <div className="mt-2 text-right"><button onClick={() => deleteResource(r.id)} className="text-[10px] text-red-500 flex items-center gap-1 justify-end ml-auto"><Trash2 size={10}/> Delete Resource</button></div>
-                                </div>
-                            ) : (
-                                <div className="flex justify-between items-center py-2" onClick={() => { setEditId(r.id); setEditForm({...r}); }}><div><div className="font-bold text-sm">{r.name}</div><div className="mt-1"><Badge theme={theme} type={r.type}>{r.type}</Badge></div></div><div className="text-right text-xs font-mono opacity-70"><div>{r.mass} kg</div><div>{r.value} Cr</div></div><Edit2 size={12} className="absolute top-2 right-2 opacity-0 group-hover:opacity-50" /></div>
-                            )}
-                        </Card>
-                    ))}
-                </div>
-            )}
-
-            {viewMode === 'blueprints' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {filteredBps.map(bp => (
-                        <Card key={bp.id} theme={theme} className="relative group">
-                            <div className="flex justify-between items-start mb-2"><div><div className="font-bold">{bp.name}</div><div className="text-xs opacity-60 uppercase tracking-widest">{bp.category}</div></div><div className="flex gap-2"><button onClick={() => { setEditBlueprintData(bp); setModalType('editBlueprint'); setModalOpen(true); }} className="opacity-0 group-hover:opacity-100 hover:text-blue-400"><Edit2 size={16}/></button><button onClick={() => deleteBlueprint(bp.id)} className="opacity-0 group-hover:opacity-100 hover:text-red-400"><Trash2 size={16}/></button></div></div>
-                            <div className="text-xs opacity-70 space-y-1">{bp.ingredients?.map((ing, i) => { const r = appData.resources.find(x => x.id === ing.resourceId); return <div key={i} className="flex justify-between"><span>{r?.name || ing.resourceId}</span><span>x{ing.count}</span></div>; })}</div>
-                        </Card>
-                    ))}
-                </div>
-            )}
-
-            {viewMode === 'systems' && (
-                <div className="space-y-4">
-                    {/* Add System */}
-                    <Card theme={theme} className="p-3 bg-current/5">
-                        <div className="text-xs font-bold uppercase opacity-70 mb-2">Register New System</div>
-                        <div className="flex gap-2">
-                            <Input theme={theme} value={newSysName} onChange={(e) => setNewSysName(e.target.value)} placeholder="System Name" className="flex-1" />
-                            <Button theme={theme} onClick={() => { if(newSysName) { renameSystem(null, newSysName); setNewSysName(''); } }}><Plus size={16}/></Button>
-                        </div>
-                    </Card>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {systemsList.map(sys => (
-                            <Card key={sys} theme={theme} className="flex flex-col gap-2">
-                                <div className="flex justify-between items-center border-b border-opacity-10 border-current pb-2">
-                                    <div className="font-bold text-lg">{sys}</div>
-                                    <div className="flex gap-2">
-                                        <button onClick={() => setExpandedSys(expandedSys === sys ? null : sys)} className="text-xs opacity-50 hover:opacity-100">{expandedSys === sys ? 'Close' : 'Edit'}</button>
-                                        <button onClick={() => deleteSystem(sys)} className="text-red-500 opacity-50 hover:opacity-100"><Trash2 size={14}/></button>
-                                    </div>
-                                </div>
-                                {expandedSys === sys ? (
-                                    <div className="space-y-2 animate-in fade-in">
-                                        <div className="flex gap-2">
-                                            <Input theme={theme} value={newPlanetName} onChange={(e) => setNewPlanetName(e.target.value)} placeholder="New Planet" className="flex-1" />
-                                            <Button size="sm" theme={theme} onClick={() => { if(newPlanetName) { addPlanet(sys, newPlanetName); setNewPlanetName(''); } }}><Plus size={14}/></Button>
-                                        </div>
-                                        <div className="space-y-2">
-                                            {(appData.systems[sys] || []).map(pItem => {
-                                                const pName = typeof pItem === 'string' ? pItem : pItem.name;
-                                                const pEnvs = typeof pItem === 'string' ? [] : (pItem.environments || []);
-                                                const pMoons = typeof pItem === 'string' ? [] : (pItem.moons || []);
-                                                
-                                                return (
-                                                    <div key={pName} className={`rounded border overflow-hidden ${theme==='cockpit'?'border-slate-700 bg-slate-800':'border-slate-200 bg-slate-50'}`}>
-                                                        <div className="flex items-center justify-between px-2 py-1 cursor-pointer hover:bg-current/5" onClick={() => setExpandedPlanet(expandedPlanet === pName ? null : pName)}>
-                                                            <div className="text-sm font-bold flex items-center gap-2">
-                                                                <Globe size={12}/> {pName}
-                                                                <div className="flex gap-2 text-[10px] opacity-60">
-                                                                   {pMoons.length > 0 && <span>{pMoons.length} Moons</span>}
-                                                                   {pEnvs.length > 0 && <span>{pEnvs.length} Biomes</span>}
-                                                                </div>
-                                                            </div>
-                                                            <button onClick={(e) => { e.stopPropagation(); deletePlanet(sys, pName); }} className="text-red-400 hover:text-red-600"><X size={12}/></button>
-                                                        </div>
-                                                        
-                                                        {expandedPlanet === pName && (
-                                                            <div className="p-2 border-t border-current border-opacity-10 bg-current/5 space-y-3">
-                                                                {/* Environments Section */}
-                                                                <div>
-                                                                    <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Environments</div>
-                                                                    <div className="flex gap-1 mb-2">
-                                                                        <Input theme={theme} value={newEnvName} onChange={(e) => setNewEnvName(e.target.value)} placeholder="Add Environment" className="flex-1" />
-                                                                        <Button size="sm" theme={theme} onClick={() => { if(newEnvName) { addEnvironment(sys, pName, newEnvName); setNewEnvName(''); } }}><Plus size={12}/></Button>
-                                                                    </div>
-                                                                    <div className="flex flex-wrap gap-1">
-                                                                        {pEnvs.map(env => (
-                                                                            <span key={env} className={`text-[10px] px-2 py-0.5 rounded flex items-center gap-1 border ${theme==='cockpit'?'border-slate-600 bg-slate-700':'border-slate-300 bg-white'}`}>
-                                                                                <Mountain size={8}/> {env}
-                                                                                <button onClick={() => deleteEnvironment(sys, pName, env)} className="hover:text-red-500"><X size={8}/></button>
-                                                                            </span>
-                                                                        ))}
-                                                                        {pEnvs.length === 0 && <span className="text-[10px] opacity-50 italic">No environments.</span>}
-                                                                    </div>
-                                                                </div>
-
-                                                                {/* Moons Section */}
-                                                                <div>
-                                                                    <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Moons</div>
-                                                                    <div className="flex gap-1 mb-2">
-                                                                        <Input theme={theme} value={newMoonName} onChange={(e) => setNewMoonName(e.target.value)} placeholder="Add Moon" className="flex-1" />
-                                                                        <Button size="sm" theme={theme} onClick={() => { if(newMoonName) { addMoon(sys, pName, newMoonName); setNewMoonName(''); } }}><Plus size={12}/></Button>
-                                                                    </div>
-                                                                    <div className="flex flex-col gap-1">
-                                                                        {pMoons.map(moonItem => {
-                                                                            const mName = typeof moonItem === 'string' ? moonItem : moonItem.name;
-                                                                            const mEnvs = typeof moonItem === 'string' ? [] : (moonItem.environments || []);
-                                                                            return (
-                                                                                <div key={mName} className={`text-[10px] px-2 py-1 rounded flex flex-col gap-1 border ${theme==='cockpit'?'border-slate-600 bg-slate-700':'border-slate-300 bg-white'}`}>
-                                                                                    <div className="flex items-center justify-between cursor-pointer" onClick={() => setExpandedMoon(expandedMoon === mName ? null : mName)}>
-                                                                                        <div className="flex items-center gap-1"><Disc size={8}/> {mName} {mEnvs.length > 0 && `(${mEnvs.length} biomes)`}</div>
-                                                                                        <button onClick={() => { e.stopPropagation(); deleteMoon(sys, pName, mName); }} className="hover:text-red-500"><X size={8}/></button>
-                                                                                    </div>
-                                                                                    {expandedMoon === mName && (
-                                                                                        <div className="pl-2 border-l border-current border-opacity-20 mt-1">
-                                                                                            <div className="flex gap-1 mb-1">
-                                                                                                <Input theme={theme} value={newMoonEnvName} onChange={(e) => setNewMoonEnvName(e.target.value)} placeholder="Moon Biome" className="flex-1 text-[9px] h-6 py-0" />
-                                                                                                <Button size="sm" theme={theme} className="h-6 py-0 px-2" onClick={() => { if(newMoonEnvName) { addMoonEnvironment(sys, pName, mName, newMoonEnvName); setNewMoonEnvName(''); } }}><Plus size={10}/></Button>
-                                                                                            </div>
-                                                                                            <div className="flex flex-wrap gap-1">
-                                                                                                {mEnvs.map(me => (
-                                                                                                    <span key={me} className="bg-current/10 px-1 rounded flex items-center gap-1">
-                                                                                                        {me}
-                                                                                                        <button onClick={() => deleteMoonEnvironment(sys, pName, mName, me)} className="hover:text-red-500"><X size={8}/></button>
-                                                                                                    </span>
-                                                                                                ))}
-                                                                                            </div>
-                                                                                        </div>
-                                                                                    )}
-                                                                                </div>
-                                                                            )
-                                                                        })}
-                                                                        {pMoons.length === 0 && <span className="text-[10px] opacity-50 italic">No moons listed.</span>}
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )
-                                            })}
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="text-xs opacity-60 truncate">
-                                        {(appData.systems[sys] || []).map(p => typeof p === 'string' ? p : p.name).join(', ')}
-                                    </div>
-                                )}
-                            </Card>
-                        ))}
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-};
-
-const SettingsView = ({ appData, theme, updateCapacities, confirmAction, saveDataToFirebase, setAppData, showNotification, exportData, importData, softReset, updateDbToMaster, user }) => {
-    
-    const handleLogout = async () => {
-        confirmAction("Sign Out?", "You will return to the login screen.", async () => {
-            try {
-                if (auth) {
-                    await signOut(auth);
-                }
-            } catch (error) {
-                console.error("Logout failed", error);
-            }
-        });
-    };
-
-    return (
-        <div className="space-y-6 pb-20">
-            <Card theme={theme} className="flex flex-col gap-4 border-l-4 border-l-blue-500">
-                <div className="flex justify-between items-center border-b border-opacity-10 border-current pb-2">
-                    <h3 className="text-sm font-bold uppercase flex items-center gap-2"><User size={16}/> Pilot License</h3>
-                </div>
-                <div className="flex flex-col gap-3">
-                    <div className="space-y-3">
-                        <div className="flex items-center gap-3">
-                            {user?.photoURL ? <img src={user.photoURL} className="w-10 h-10 rounded-full border border-current" alt="Avatar"/> : <div className="w-10 h-10 rounded-full bg-current opacity-20"/>}
-                            <div>
-                                <div className="font-bold text-sm">{user?.displayName || 'Unknown Pilot'}</div>
-                                <div className="text-[10px] opacity-60 font-mono">{user?.email}</div>
-                            </div>
-                        </div>
-                        <p className="text-[10px] opacity-50 bg-green-500/10 text-green-500 p-2 rounded border border-green-500/20">
-                            <Check size={10} className="inline mr-1"/> Cloud Sync Active
-                        </p>
-                        <Button theme={theme} variant="danger" size="sm" onClick={handleLogout}>
-                            <LogOut size={16} /> Sign Out
-                        </Button>
-                    </div>
-                </div>
-            </Card>
-
-            <Card theme={theme} className="flex flex-col gap-4">
-                <div className="flex justify-between items-center border-b border-opacity-10 border-current pb-2"><h3 className="text-sm font-bold uppercase flex items-center gap-2"><Settings size={16}/> Capacity Configuration</h3></div>
-                <div className="flex gap-4"><div className="flex-1"><label className="flex items-center gap-1 text-[10px] uppercase font-bold mb-1"><Ship size={10} /> Ship Cargo</label><input type="number" value={appData.capacities.ship} onChange={(e) => updateCapacities({ ship: parseInt(e.target.value) || 0 })} className={`w-full p-2 rounded text-sm font-mono ${theme==='cockpit'?'bg-slate-900 border border-amber-800 text-amber-100':'bg-slate-100 border border-slate-300'}`} /></div><div className="flex-1"><label className="flex items-center gap-1 text-[10px] uppercase font-bold mb-1"><User size={10} /> Personal</label><input type="number" value={appData.capacities.person} onChange={(e) => updateCapacities({ person: parseInt(e.target.value) || 0 })} className={`w-full p-2 rounded text-sm font-mono ${theme==='cockpit'?'bg-slate-900 border border-amber-800 text-amber-100':'bg-slate-100 border border-slate-300'}`} /></div></div>
-            </Card>
-            
-            <Card theme={theme}>
-                <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Database size={20}/> Data Management</h3>
-                <div className="flex flex-col gap-3">
-                    <Button theme={theme} variant="secondary" onClick={exportData}><Download size={16}/> Export Data (Backup)</Button>
-                    <div className="relative">
-                        <input type="file" accept=".json" onChange={importData} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                        <Button theme={theme} variant="secondary" className="w-full"><Upload size={16}/> Import Data</Button>
-                    </div>
-                </div>
-            </Card>
-
-            <Card theme={theme} className="border-amber-500/30">
-                <h3 className="text-lg font-bold mb-2 text-amber-500 flex items-center gap-2"><Sparkles size={20}/> New Game+</h3>
-                <p className="text-xs opacity-70 mb-4">Reset your universe state (Projects, Outposts, Stash) but keep your knowledge (Blueprints, Resource Data, System Maps).</p>
-                <Button theme={theme} onClick={softReset}>Enter the Unity (Soft Reset)</Button>
-            </Card>
-
-            <Card theme={theme} className="border-red-500/30"><h3 className="text-lg font-bold mb-2 text-red-500 flex items-center gap-2"><AlertCircle size={20}/> Danger Zone</h3><Button theme={theme} variant="danger" size="sm" onClick={() => confirmAction("Factory Reset", "This cannot be undone.", () => { saveDataToFirebase(DEFAULT_STATE); setAppData(DEFAULT_STATE); })}>Factory Reset (Wipe All)</Button></Card>
-        </div>
-    );
-};
-
-// --- MAIN APP ---
-
-export default function StarfieldCompanionV26() {
-  const [theme, setTheme] = useState('cockpit');
-  const [activeTab, setActiveTab] = useState('overview');
-  const [user, setUser] = useState(null);
-  const [appData, setAppData] = useState(DEFAULT_STATE);
-  const [loading, setLoading] = useState(true);
-  const [notification, setNotification] = useState(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalType, setModalType] = useState(null);
-  const [editProjectData, setEditProjectData] = useState(null);
-  const [editNodeData, setEditNodeData] = useState(null);
-  const [confirmState, setConfirmState] = useState({ isOpen: false, title: '', message: '', onConfirm: () => {} });
-  // Edit Blueprint State
-  const [editBlueprintData, setEditBlueprintData] = useState(null);
-
-  // --- PERSISTENCE & FIREBASE ---
-  useEffect(() => {
-     const savedTheme = localStorage.getItem('starfield_theme');
-     if (savedTheme) setTheme(savedTheme);
-  }, []);
-
-  useEffect(() => { localStorage.setItem('starfield_theme', theme); }, [theme]);
-
-  useEffect(() => {
-    if (!auth) { setLoading(false); return; }
-    // AUTO-LOGIN LOGIC REMOVED
-    // We now solely rely on onAuthStateChanged to detect if a persistent session exists.
-    // If no session exists, the user will see the LoginView.
-    return onAuthStateChanged(auth, (u) => { 
-        setUser(u); 
-        setLoading(false); 
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!user || !db) return;
-    return onSnapshot(doc(db, 'artifacts', appId, 'users', user.uid, 'app_data', 'main_save'), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        // Ensure nodes array exists and systems db exists
-        setAppData(prev => ({ ...prev, ...data, nodes: data.nodes || [], systems: data.systems || INITIAL_SYSTEMS_DB, resources: data.resources || MASTER_RESOURCE_DB, blueprints: data.blueprints || MASTER_BLUEPRINT_DB }));
-      } else saveDataToFirebase(DEFAULT_STATE);
-      setLoading(false);
-    });
-  }, [user]);
-
-  const saveDataToFirebase = async (newData) => { if (user && db) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'app_data', 'main_save'), newData); };
-  const showNotification = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 3000); };
-  const confirmAction = (title, message, action) => setConfirmState({ isOpen: true, title, message, onConfirm: () => { action(); setConfirmState(prev => ({ ...prev, isOpen: false })); } });
-
-  // --- NEW ACTIONS (V24) ---
-  const exportData = () => {
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appData));
-      const downloadAnchorNode = document.createElement('a');
-      downloadAnchorNode.setAttribute("href", dataStr);
-      downloadAnchorNode.setAttribute("download", "starfield_companion_backup.json");
-      document.body.appendChild(downloadAnchorNode);
-      downloadAnchorNode.click();
-      downloadAnchorNode.remove();
-      showNotification("Data Exported");
+  const pickRandom = () => {
+      const candidates = games.filter(g => g.status === 'backlog' || g.status === 'playing');
+      if (candidates.length === 0) return; 
+      const random = candidates[Math.floor(Math.random() * candidates.length)];
+      setActiveGameId(random.id);
+      setView('game-detail');
   };
 
-  const importData = (event) => {
-      const fileReader = new FileReader();
-      fileReader.readAsText(event.target.files[0], "UTF-8");
-      fileReader.onload = e => {
-          try {
-              const parsed = JSON.parse(e.target.result);
-              if (parsed.resources && parsed.projects) {
-                  confirmAction("Import Data?", "This will overwrite your current progress.", () => {
-                      setAppData(parsed);
-                      saveDataToFirebase(parsed);
-                      showNotification("Data Imported");
-                  });
-              } else showNotification("Invalid File");
-          } catch(err) { showNotification("Import Failed"); }
-      };
-  };
-  
-  const updateDbToMaster = () => {
-      confirmAction("Update Database?", "Merge master list?", () => { 
-          const newRes = MASTER_RESOURCE_DB.filter(m => !appData.resources.find(r => r.id === m.id)); 
-          const newBp = MASTER_BLUEPRINT_DB.filter(m => !appData.blueprints.find(b => b.id === m.id)); 
-          // Merge systems logic could be complex, for now trust user edits or master depending on preference.
-          // Here we just merge resources/blueprints to avoid overwriting custom systems.
-          const newData = {...appData, resources: [...appData.resources, ...newRes], blueprints: [...appData.blueprints, ...newBp]};
-          setAppData(newData); 
-          saveDataToFirebase(newData); 
-          showNotification(`DB Updated (+${newRes.length} items)`); 
-      }); 
+  return (
+    <div className="pb-24 min-h-screen bg-slate-950 animate-in fade-in duration-300">
+      <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-md pt-16 pb-4 px-6 border-b border-slate-800">
+        <div className="flex items-center justify-between mb-4"><h1 className="text-2xl font-black text-white">Library</h1><div className="flex items-center gap-3"><button onClick={pickRandom} className="p-2 bg-indigo-600 rounded-full text-white hover:bg-indigo-500 transition-colors shadow-lg" title="Pick a random game"><Dices size={20} /></button><div className="text-slate-500 text-xs font-mono">{filtered.length} GAMES</div></div></div>
+        <div className="flex gap-2 mb-4">
+          <div className="relative flex-1"><Search className="absolute left-3 top-2.5 text-slate-500" size={14} /><input placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-white outline-none focus:border-indigo-500 transition-colors" /></div>
+          <select value={sort} onChange={e => setSort(e.target.value)} className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 outline-none focus:border-indigo-500 transition-colors"><option value="lastAdded">Recent</option><option value="alpha">A-Z</option><option value="time">Time Played</option><option value="rating">Rating</option></select>
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">{['all', 'playing', 'backlog', 'completed', 'shelved'].map(f => <button key={f} onClick={() => setFilter(f)} className={`px-4 py-1.5 rounded-full text-xs font-bold capitalize whitespace-nowrap transition-colors ${filter === f ? 'bg-white text-black' : 'bg-slate-900 text-slate-400 border border-slate-800'}`}>{f}</button>)}</div>
+      </header>
+      <div className="p-4 grid grid-cols-1 gap-3">
+        {filtered.map(game => {
+          const totalTime = formatDuration(getMinutes(game.id));
+          const mCount = game.milestones ? game.milestones.length : 0;
+          const mDone = game.milestones ? game.milestones.filter(m => m.completed).length : 0;
+          return (
+            <div key={game.id} onClick={() => { setActiveGameId(game.id); setView('game-detail'); }} className="bg-slate-900 rounded-xl border border-slate-800 flex overflow-hidden h-24 active:bg-slate-800 transition-colors cursor-pointer relative group">
+              <div className="w-16 h-full bg-slate-800 flex-shrink-0 relative">{game.coverUrl ? <img src={game.coverUrl} loading="lazy" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-slate-600"><ImageIcon size={20}/></div>}</div>
+              <div className="p-3 flex-1 flex flex-col justify-between">
+                <div><h3 className="font-bold text-slate-200 line-clamp-1">{game.title}</h3><div className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">{getPlatformIcon(game.platform)} {game.platform}</div></div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] px-2 py-0.5 rounded border uppercase font-bold tracking-wider ${STATUS_COLORS[game.status] || STATUS_COLORS.backlog}`}>{game.status}</span>
+                  <div className="flex items-center gap-1 text-[10px] text-slate-500 font-bold bg-slate-950 px-2 py-0.5 rounded border border-slate-800"><Clock size={10} /> {totalTime}</div>
+                  {game.rating > 0 && <div className="flex items-center gap-0.5 text-amber-400 bg-amber-950/30 px-2 py-0.5 rounded border border-amber-900/50"><Star size={10} fill="currentColor"/> <span className="text-[10px] font-bold">{game.rating}</span></div>}
+                </div>
+              </div>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 group-hover:text-white"><ChevronRight size={20}/></div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const GameDetailView = ({ activeGame, logs, activeSession, setView, setShowEditGameModal, updateGame, handleStartSession, handlePauseSession, handleResumeSession, handleStopSession, setEditingLog, setShowLogModal, deleteGame, onDeleteLog, requestConfirm }) => {
+  if (!activeGame) return null;
+  const totalTime = formatDuration(logs.filter(l => l.gameId === activeGame.id).reduce((acc,l) => acc + (l.durationMinutes||0), 0));
+  const milestones = activeGame.milestones || [];
+  const activeLogs = logs.filter(l => l.gameId === activeGame.id).sort((a,b) => new Date(b.date) - new Date(a.date));
+
+  const MilestonesSection = () => {
+      const [newM, setNewM] = useState('');
+      return (
+          <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 mb-6">
+              <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-wide flex items-center gap-2 mb-3"><ListTodo size={16} /> Milestones</h3>
+              <div className="space-y-2 mb-3">
+                  {milestones.map(m => (
+                      <div key={m.id} className="flex items-start gap-2 group">
+                          <button onClick={() => updateGame(activeGame.id, { milestones: milestones.map(x => x.id === m.id ? { ...x, completed: !x.completed } : x) })} className={`mt-0.5 ${m.completed ? 'text-emerald-500' : 'text-slate-600 hover:text-slate-400'}`}>{m.completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}</button>
+                          <span className={`flex-1 text-sm ${m.completed ? 'text-slate-500 line-through' : 'text-slate-200'}`}>{m.text}</span>
+                          <button onClick={() => updateGame(activeGame.id, { milestones: milestones.filter(x => x.id !== m.id) })} className="text-slate-700 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14}/></button>
+                      </div>
+                  ))}
+              </div>
+              <div className="flex gap-2"><input value={newM} onChange={e => setNewM(e.target.value)} placeholder="Add milestone..." className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-indigo-500" /><button onClick={() => { if(newM.trim()) { updateGame(activeGame.id, { milestones: [...milestones, { id: crypto.randomUUID(), text: newM, completed: false }] }); setNewM(''); } }} className="bg-indigo-600 text-white px-3 rounded-lg hover:bg-indigo-500"><Plus size={16}/></button></div>
+          </div>
+      );
   };
 
-  const softReset = () => {
-      confirmAction("New Game+ Reset?", "This will clear Projects, Stash, and Nodes, but KEEP your Custom Database (Resources, Blueprints, Systems).", () => {
-          const newData = {
-              ...appData,
-              projects: [],
-              nodes: [],
-              stash: {}
-          };
-          setAppData(newData);
-          saveDataToFirebase(newData);
-          showNotification("Universe Reset. Knowledge Retained.");
+  const handleFinishClick = () => {
+      requestConfirm("Mark this game as completed?", () => {
+          updateGame(activeGame.id, { status: 'completed', completedDate: activeGame.completedDate || new Date().toISOString() });
       });
   };
 
+  // Timer Controls
+  let timerControls;
+  if (activeSession?.gameId === activeGame.id) {
+      const isPaused = activeSession.status === 'paused';
+      timerControls = (
+          <>
+            <button onClick={isPaused ? handleResumeSession : handlePauseSession} className={`flex-1 ${isPaused ? 'bg-amber-600 hover:bg-amber-500' : 'bg-indigo-600 hover:bg-indigo-500'} text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg transition-all`}>
+               {isPaused ? <><Play size={18} fill="currentColor" /> Resume</> : <><PauseCircle size={18} /> Pause</>}
+            </button>
+            <button onClick={() => handleStopSession()} className="flex-1 bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg transition-all">
+               <div className="w-4 h-4 bg-red-500 rounded-sm"></div> End Session
+            </button>
+          </>
+      );
+  } else {
+      timerControls = (
+          <button onClick={() => handleStartSession(activeGame.id)} className="col-span-2 bg-indigo-600 hover:bg-indigo-500 text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-indigo-900/20 active:scale-95 transition-all">
+             <PlayCircle size={20} /> Start Session
+          </button>
+      );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 pb-24 animate-in slide-in-from-right duration-300">
+      <div className="relative h-64 w-full">
+         {activeGame.coverUrl ? <div className="absolute inset-0"><img src={activeGame.coverUrl} className="w-full h-full object-cover" /><div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent"></div></div> : <div className={`absolute inset-0 bg-indigo-950`}></div>}
+        <button onClick={() => setView('library')} className="absolute top-12 left-4 p-2 bg-black/30 backdrop-blur-md rounded-full text-white z-10 hover:bg-black/50"><ChevronRight className="rotate-180" size={24} /></button>
+        <button onClick={() => setShowEditGameModal(true)} className="absolute top-12 right-4 p-2 bg-black/30 backdrop-blur-md rounded-full text-white z-10 hover:bg-black/50"><Edit2 size={20} /></button>
+        <div className="absolute bottom-0 left-0 right-0 p-6">
+           <div className="flex gap-4 items-end">
+              <div className="w-24 h-32 rounded-lg bg-slate-800 shadow-2xl border border-slate-700 overflow-hidden flex-shrink-0 hidden sm:block">{activeGame.coverUrl && <img src={activeGame.coverUrl} className="w-full h-full object-cover"/>}</div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2"><span className="text-xs font-bold bg-black/50 backdrop-blur-md px-2 py-1 rounded text-slate-300 flex items-center gap-1">{getPlatformIcon(activeGame.platform)} {activeGame.platform}</span><button className={`text-[10px] px-2 py-1 rounded border uppercase font-bold tracking-wider hover:brightness-110 ${STATUS_COLORS[activeGame.status] || STATUS_COLORS.backlog}`}>{activeGame.status}</button></div>
+                <h1 className="text-2xl font-black text-white leading-tight mb-2 shadow-black drop-shadow-lg">{activeGame.title}</h1>
+                <div className="flex items-center gap-3">
+                    <span className="text-xs font-mono text-indigo-400 bg-slate-900/80 px-2 py-1 rounded border border-slate-700 flex items-center gap-1"><Clock size={12} /> {totalTime}</span>
+                    {activeGame.rating > 0 && <div className="flex items-center gap-0.5 text-amber-400 bg-amber-950/30 px-2 py-0.5 rounded border border-amber-900/50"><Star size={10} fill="currentColor"/> <span className="text-[10px] font-bold">{activeGame.rating}</span></div>}
+                    {activeGame.linkUrl && (
+                        <a href={activeGame.linkUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] font-bold text-sky-400 bg-sky-950/30 px-2 py-1 rounded border border-sky-900/50 hover:bg-sky-900/50 transition-colors">
+                            <Globe size={12} /> Guide
+                        </a>
+                    )}
+                </div>
+              </div>
+           </div>
+        </div>
+      </div>
+      <div className="mt-6 px-6">
+        <div className="grid grid-cols-2 gap-3 mb-8">
+          {timerControls}
+          
+          <button onClick={() => { setEditingLog({ isAutoLog: false }); setShowLogModal(true); }} className="bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2"><Book size={18} /> Manual Log</button>
+          
+          {activeGame.status === 'completed' ? (
+             <button onClick={() => updateGame(activeGame.id, { status: 'playing' })} className="flex-1 border border-slate-700 text-slate-300 hover:bg-slate-900 py-3 rounded-lg font-bold flex items-center justify-center gap-2"><RotateCcw size={18} /> Replay</button>
+          ) : (
+             <button onClick={handleFinishClick} className="flex-1 border border-emerald-500/50 text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20 py-3 rounded-lg font-bold flex items-center justify-center gap-2"><CheckCircle2 size={18} /> {activeGame.completedDate ? 'Finish Run' : 'Finish'}</button>
+          )}
+        </div>
+        <MilestonesSection />
+        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 mb-6">
+            <div className="flex items-center justify-between mb-3"><h3 className="text-sm font-bold text-slate-300 uppercase tracking-wide flex items-center gap-2"><Star size={16} /> Rating & Review</h3><div className="flex gap-1">{[1, 2, 3, 4, 5].map((star) => (<button key={star} onClick={() => updateGame(activeGame.id, { rating: star })} className={`${star <= activeGame.rating ? 'text-yellow-400 fill-yellow-400' : 'text-slate-700'} hover:scale-110 transition-transform`}><Star size={20} fill={star <= activeGame.rating ? "currentColor" : "none"} /></button>))}</div></div>
+            <textarea placeholder="Write your review..." value={activeGame.review || ''} onChange={(e) => updateGame(activeGame.id, { review: e.target.value })} className="w-full bg-slate-950/50 text-slate-300 text-sm p-3 rounded-lg border border-slate-800 outline-none focus:border-indigo-500/50 min-h-[80px]" />
+        </div>
+        <div>
+          <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 border-b border-slate-800 pb-2">Journal ({activeLogs.length})</h2>
+          <div className="space-y-4">
+            {activeLogs.length === 0 ? <div className="text-center py-8 text-slate-600"><p className="mb-2">No entries yet.</p></div> : activeLogs.map(log => (
+              <div key={log.id} className="bg-slate-900/50 p-4 rounded-xl border border-slate-800/50 group">
+                <div className="flex justify-between items-center mb-2"><div className="flex items-center gap-2"><span className="text-xs font-mono text-indigo-400">{new Date(log.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>{log.durationMinutes > 0 && <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded flex items-center gap-1"><Clock size={10} /> {formatDuration(log.durationMinutes)}</span>}</div><div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button type="button" onClick={() => { setEditingLog(log); setShowLogModal(true); }} className="text-slate-500 hover:text-white"><Edit2 size={14}/></button><button type="button" onClick={() => onDeleteLog(log.id)} className="text-slate-500 hover:text-red-500"><Trash2 size={14}/></button></div></div>
+                <div className="flex gap-1 flex-wrap mb-2">
+                    {log.tags && log.tags.map(t => <span key={t} className={`text-[10px] px-1.5 py-0.5 rounded border ${TAG_COLORS[t] || TAG_COLORS.Idle}`}>{t}</span>)}
+                </div>
+                <p className="text-slate-200 text-sm leading-relaxed whitespace-pre-wrap">{log.content}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- MAIN COMPONENT ---
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  
+  // State
+  const [view, setView] = useState('overview'); 
+  const [activeGameId, setActiveGameId] = useState(null);
+  const [calendarDate, setCalendarDate] = useState(new Date()); 
+  const [selectedDateLogs, setSelectedDateLogs] = useState(null); 
+  
+  const [games, setGames] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [activeSession, setActiveSession] = useState(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
+
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditGameModal, setShowEditGameModal] = useState(false);
+  const [showLogModal, setShowLogModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [editingLog, setEditingLog] = useState(null);
+  const [confirmModal, setConfirmModal] = useState(null);
+
+  const [libSearch, setLibSearch] = useState('');
+  const [libSort, setLibSort] = useState('lastAdded'); 
+  const [libFilter, setLibFilter] = useState('all'); 
+
+  // Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Sync
+  useEffect(() => {
+    if (!user) return;
+    const qGames = collection(db, 'artifacts', appId, 'users', user.uid, 'games');
+    const qLogs = collection(db, 'artifacts', appId, 'users', user.uid, 'logs');
+    const docSession = doc(db, 'artifacts', appId, 'users', user.uid, 'system', 'active_session');
+
+    const u1 = onSnapshot(qGames, s => setGames(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const u2 = onSnapshot(qLogs, s => setLogs(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const u3 = onSnapshot(docSession, s => {
+        if (s.exists()) {
+            const data = s.data();
+            setActiveSession(data);
+            const now = Date.now();
+            let total = data.accumulatedTime || 0;
+            if (data.status === 'running' && data.startTime) {
+                total += (now - data.startTime) / 1000;
+            }
+            setElapsedTime(Math.floor(total));
+        } else {
+            setActiveSession(null);
+            setElapsedTime(0);
+        }
+    });
+
+    return () => { u1(); u2(); u3(); };
+  }, [user]);
+
+  // Timer Tick
+  useEffect(() => {
+    let interval;
+    if (activeSession && activeSession.status === 'running' && activeSession.startTime) {
+      interval = setInterval(() => {
+        const now = Date.now();
+        const currentSegment = (now - activeSession.startTime) / 1000;
+        setElapsedTime(Math.floor((activeSession.accumulatedTime || 0) + currentSegment));
+      }, 1000);
+    } 
+    return () => clearInterval(interval);
+  }, [activeSession]);
+
+  const activeGame = activeGameId ? games.find(g => g.id === activeGameId) : null;
+  
+  const stats = useMemo(() => {
+    const totalMinutes = logs.reduce((acc, log) => acc + (log.durationMinutes || 0), 0);
+    const completedGames = games.filter(g => g.status === 'completed' || g.completedDate).length;
+    return { totalHours: Math.round(totalMinutes / 60), completedGames };
+  }, [logs, games]);
+
+  const requestConfirm = (message, onConfirm) => {
+      setConfirmModal({ message, onConfirm });
+  };
+
+  // Auth Actions
   const loginWithGoogle = async () => {
       try {
           const provider = new GoogleAuthProvider();
           await signInWithPopup(auth, provider);
       } catch (error) {
           console.error("Login failed", error);
-          showNotification("Login Failed: Popup Blocked?");
       }
   };
 
-  // --- LOGIC ---
-  const saveProject = (projectData) => {
-    if (editProjectData) {
-        const updatedProjects = appData.projects.map(p => {
-            if (p.id !== editProjectData.id) return p;
-            const newIngredients = projectData.ingredients.map(newIng => {
-                const oldIng = p.ingredients.find(old => old.resourceId === newIng.resourceId);
-                return { ...newIng, current: oldIng ? Math.min(oldIng.current, newIng.count) : 0 };
-            });
-            // FIX: Don't auto-complete
-            return { ...p, ...projectData, ingredients: newIngredients, completed: false };
-        });
-        const newData = { ...appData, projects: updatedProjects };
-        setAppData(newData); saveDataToFirebase(newData);
-        showNotification("Project Updated");
-    } else {
-        // Deep copy stash for safe mutation
-        const newStash = { ...appData.stash };
-        const ingredients = projectData.ingredients.map(ing => {
-            const inStash = newStash[ing.resourceId] || 0;
-            const take = Math.min(inStash, ing.count);
-            if (take > 0) {
-                newStash[ing.resourceId] -= take;
-                if (newStash[ing.resourceId] <= 0) delete newStash[ing.resourceId];
-            }
-            return { ...ing, current: take };
-        });
+  const handleSignOut = async () => {
+      requestConfirm("Sign out of your account?", () => {
+          signOut(auth);
+          setShowSettingsModal(false);
+      });
+  };
 
-        const newProject = {
-          id: Date.now().toString(), ...projectData,
-          ingredients: ingredients,
-          createdAt: Date.now(), 
-          // FIX: Initialize as not completed
-          completed: false
-        };
-        const newData = { ...appData, projects: [newProject, ...appData.projects], stash: newStash };
-        setAppData(newData); saveDataToFirebase(newData);
-        showNotification("Project Created");
+  // Actions
+  const addGame = async (e) => {
+    e.preventDefault();
+    if(!user) return;
+    const t = e.target;
+    const newGame = { 
+      title: t.title.value, 
+      platform: t.platform.value || 'PC', 
+      coverUrl: t.coverUrl.value || '', 
+      linkUrl: t.linkUrl.value || '',
+      status: t.status.value || 'backlog', 
+      rating: 0, 
+      addedDate: new Date().toISOString(), 
+      milestones: [] 
+    };
+    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'games'), newGame);
+    setShowAddModal(false);
+  };
+
+  const updateGame = async (id, updates) => {
+    if(!user) return;
+    await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'games', id), updates);
+  };
+
+  const deleteGame = async (id) => {
+    if(!user) return;
+    requestConfirm("Delete this game and all its data?", async () => {
+        await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'games', id));
+        setShowEditGameModal(false);
+        setActiveGameId(null);
+        if (activeSession?.gameId === id) handleStopSession(true); 
+        setView('library');
+    });
+  };
+
+  const deleteLog = async (id) => {
+    if(!user) return;
+    requestConfirm("Delete this log entry?", async () => {
+        await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'logs', id));
+        if(selectedDateLogs) setSelectedDateLogs(null);
+    });
+  };
+
+  const handleStartSession = async (id) => {
+    if(!user) return;
+    await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'system', 'active_session'), { 
+        gameId: id, 
+        startTime: Date.now(),
+        accumulatedTime: 0,
+        status: 'running'
+    });
+  };
+
+  const handlePauseSession = async () => {
+      if(!user || !activeSession) return;
+      const now = Date.now();
+      const currentSegment = (now - activeSession.startTime) / 1000;
+      const newAccumulated = (activeSession.accumulatedTime || 0) + currentSegment;
+      
+      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'system', 'active_session'), {
+          status: 'paused',
+          startTime: null,
+          accumulatedTime: newAccumulated
+      });
+      setElapsedTime(Math.floor(newAccumulated));
+  };
+
+  const handleResumeSession = async () => {
+      if(!user || !activeSession) return;
+      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'system', 'active_session'), {
+          status: 'running',
+          startTime: Date.now()
+      });
+  };
+
+  const handleStopSession = async (force = false) => {
+    const isForce = force === true;
+    if(!user || (!activeSession && !isForce)) return;
+    
+    if (!isForce && activeSession) {
+        let finalSeconds = activeSession.accumulatedTime || 0;
+        if (activeSession.status === 'running' && activeSession.startTime) {
+            finalSeconds += (Date.now() - activeSession.startTime) / 1000;
+        }
+        const mins = Math.max(0, Math.floor(finalSeconds / 60));
+
+        setEditingLog({ isAutoLog: true, gameId: activeSession.gameId, durationMinutes: mins, date: new Date().toISOString(), content: '', tags: [] });
+        setActiveGameId(activeSession.gameId);
+        setShowLogModal(true);
     }
-    setModalOpen(false); setEditProjectData(null);
+    await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'system', 'active_session'));
   };
 
-  const deleteProject = (project) => {
-      confirmAction("Dismantle Project?", "Resources will be returned to Stash.", () => {
-          const newStash = { ...appData.stash };
-          project.ingredients.forEach(ing => { if (ing.current > 0) newStash[ing.resourceId] = (newStash[ing.resourceId] || 0) + ing.current; });
-          const newProjects = appData.projects.filter(p => p.id !== project.id);
-          const newData = { ...appData, projects: newProjects, stash: newStash };
-          setAppData(newData); saveDataToFirebase(newData);
-          showNotification("Project Dismantled");
-      });
+  const saveLog = async (e) => {
+    e.preventDefault();
+    if(!user) return;
+    const fd = new FormData(e.target);
+    const mins = (parseInt(fd.get('hours'))||0)*60 + (parseInt(fd.get('minutes'))||0);
+    const content = fd.get('content');
+    const targetGameId = fd.get('gameId') || editingLog?.gameId || activeGameId;
+
+    if(!content && mins === 0) return;
   };
 
-  const completeProject = (project) => {
-      confirmAction("Complete Mission?", "Mark as done and archive.", () => {
-          const newProjects = appData.projects.map(p => p.id === project.id ? { ...p, completed: true, completedAt: Date.now() } : p);
-          const newData = { ...appData, projects: newProjects };
-          setAppData(newData); saveDataToFirebase(newData);
-          showNotification("Mission Completed!");
-      });
-  };
+  // Re-implemented Modal for self-contained submit
+  const LogEntryModal = () => {
+    const getDateString = (isoString) => {
+      const date = new Date(isoString);
+      const pad = (num) => num.toString().padStart(2, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    };
+    
+    const [selectedTags, setSelectedTags] = useState(editingLog?.tags || []);
+    const toggleTag = (t) => setSelectedTags(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
 
-  const handleLoot = (resourceId, amount, forceStash = false) => {
-      let remaining = Math.abs(amount);
-      let newProjects = [...appData.projects];
-      const newStash = { ...appData.stash };
+    const initialHours = editingLog ? Math.floor(editingLog.durationMinutes / 60) : 0;
+    const initialMinutes = editingLog ? editingLog.durationMinutes % 60 : 0;
+    const initialDate = editingLog?.date ? getDateString(editingLog.date) : getDateString(new Date().toISOString());
+    const isEdit = editingLog && editingLog.id;
 
-      if (amount > 0) { // ADDING
-          if (!forceStash) {
-              const sortedIndices = newProjects.map((p, index) => ({ p, index, prioVal: PRIORITIES[p.priority || 'STANDARD'].value })).sort((a, b) => b.prioVal - a.prioVal);
-              sortedIndices.forEach(({ index }) => {
-                  if (newProjects[index].completed || remaining <= 0) return;
-                  const newIngs = newProjects[index].ingredients.map(ing => {
-                      if (ing.resourceId === resourceId && ing.current < ing.count && remaining > 0) {
-                          const take = Math.min(ing.count - ing.current, remaining);
-                          remaining -= take;
-                          return { ...ing, current: ing.current + take };
-                      }
-                      return ing;
-                  });
-                  // FIX: Don't auto-complete
-                  newProjects[index] = { ...newProjects[index], ingredients: newIngs, completed: false };
-              });
-          }
-          if (remaining > 0) newStash[resourceId] = (newStash[resourceId] || 0) + remaining;
-      } else { // REMOVING
-          const inStash = newStash[resourceId] || 0;
-          const takeFromStash = Math.min(inStash, remaining);
-          if (takeFromStash > 0) {
-              newStash[resourceId] -= takeFromStash;
-              remaining -= takeFromStash;
-              if (newStash[resourceId] <= 0) delete newStash[resourceId];
-          }
-          
-          if (remaining > 0 && !forceStash) {
-              // Take from projects if needed
-              for (let i = 0; i < newProjects.length; i++) {
-                  if (remaining <= 0) break;
-                  if (newProjects[i].completed) continue;
-                  const newIngs = newProjects[i].ingredients.map(ing => {
-                      if (ing.resourceId === resourceId && ing.current > 0 && remaining > 0) {
-                          const take = Math.min(ing.current, remaining);
-                          remaining -= take;
-                          return { ...ing, current: ing.current - take };
-                      }
-                      return ing;
-                  });
-                  newProjects[i] = { ...newProjects[i], ingredients: newIngs, completed: false }; 
+    return (
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-800 p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <h2 className="text-lg font-bold text-slate-400 mb-4 uppercase tracking-wide">{isEdit ? 'Edit Entry' : 'New Entry'}</h2>
+          <form onSubmit={async (e) => {
+              e.preventDefault();
+              if(!user) return;
+              const fd = new FormData(e.target);
+              const mins = (parseInt(fd.get('hours'))||0)*60 + (parseInt(fd.get('minutes'))||0);
+              const content = fd.get('content');
+              const targetGameId = fd.get('gameId') || editingLog?.gameId || activeGameId;
+
+              if(!content && mins === 0) return;
+
+              const logData = {
+                  gameId: targetGameId,
+                  date: fd.get('date'), 
+                  content, 
+                  durationMinutes: mins,
+                  tags: selectedTags
+              };
+
+              if(isEdit) { 
+                 await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'logs', editingLog.id), logData);
+              } else {
+                 await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'logs'), logData);
               }
-          }
-      }
+              setShowLogModal(false);
+          }}>
+            <div className="mb-4">
+               <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Game</label>
+               <div className="relative">
+                  <select name="gameId" defaultValue={editingLog?.gameId || activeGameId} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-sm outline-none focus:border-indigo-500 appearance-none">
+                      {games.map(g => <option key={g.id} value={g.id}>{g.title}</option>)}
+                  </select>
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500"><ChevronRight className="rotate-90" size={14} /></div>
+               </div>
+            </div>
+            <div className="flex gap-3 mb-4">
+              <div className="flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Date</label><input type="datetime-local" name="date" defaultValue={initialDate} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-sm outline-none focus:border-indigo-500" /></div>
+              <div className="w-1/3 flex gap-2">
+                 <div className="flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Hrs</label><input type="number" name="hours" min="0" defaultValue={initialHours} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-sm text-center outline-none focus:border-indigo-500" /></div>
+                 <div className="flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Mins</label><input type="number" name="minutes" min="0" max="59" defaultValue={initialMinutes} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-sm text-center outline-none focus:border-indigo-500" /></div>
+              </div>
+            </div>
+            
+            <div className="mb-4">
+                <label className="text-[10px] text-slate-500 font-bold uppercase block mb-2">Session Tags</label>
+                <div className="flex flex-wrap gap-2">
+                    {SESSION_TAGS.map(t => (
+                        <button key={t} type="button" onClick={() => toggleTag(t)} className={`text-xs px-3 py-1.5 rounded-full border transition-all ${selectedTags.includes(t) ? TAG_COLORS[t] : 'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-600'}`}>
+                            {t}
+                        </button>
+                    ))}
+                </div>
+            </div>
 
-      const newData = { ...appData, projects: newProjects, stash: newStash };
-      setAppData(newData); saveDataToFirebase(newData);
+            <textarea name="content" autoFocus={!editingLog?.isAutoLog} defaultValue={editingLog?.content || ''} placeholder="Session notes..." className="w-full h-32 bg-slate-950 border border-slate-800 rounded-xl p-4 text-white outline-none focus:border-indigo-500 mb-4 resize-none" />
+            <div className="flex gap-3"><button type="button" onClick={() => setShowLogModal(false)} className="flex-1 py-3 text-slate-400 font-bold">Cancel</button><button type="submit" className="flex-1 bg-indigo-600 text-white rounded-xl font-bold">Save</button></div>
+          </form>
+        </div>
+      </div>
+    );
   };
 
-  const handleStashUpdate = (id, newQty) => {
-      const newStash = { ...appData.stash };
-      if (newQty <= 0) delete newStash[id]; else newStash[id] = newQty;
-      const newData = { ...appData, stash: newStash };
-      setAppData(newData); saveDataToFirebase(newData);
-  };
-
-  // Node Logic
-  const addNode = (node) => {
-      // Default Title Logic
-      const finalName = node.name || `${node.planet} ${node.type}`;
-      const newData = { ...appData, nodes: [...(appData.nodes || []), { ...node, name: finalName, id: Date.now().toString() }] };
-      setAppData(newData); saveDataToFirebase(newData); setModalOpen(false); showNotification("Node Tracked");
-  };
-  const updateNode = (id, node) => {
-      const finalName = node.name || `${node.planet} ${node.type}`;
-      const newData = { ...appData, nodes: appData.nodes.map(n => n.id === id ? { ...n, ...node, name: finalName } : n) };
-      setAppData(newData); saveDataToFirebase(newData); setModalOpen(false); showNotification("Node Updated");
-  };
-  const deleteNode = (id) => {
-      confirmAction("Delete Node?", "This will remove the tracking data.", () => {
-          const newData = { ...appData, nodes: appData.nodes.filter(n => n.id !== id) };
-          setAppData(newData); saveDataToFirebase(newData); showNotification("Node Deleted");
-      });
-  };
-  
-  // System/Planet/Moon Logic
-  const renameSystem = (oldName, newName) => {
-      if (!newName) return;
-      const newSystems = { ...appData.systems };
-      // If adding new
-      if (oldName === null) {
-          if (!newSystems[newName]) newSystems[newName] = [];
-      } else {
-          // Rename existing
-          if (newSystems[oldName]) {
-              newSystems[newName] = newSystems[oldName];
-              delete newSystems[oldName];
-              
-              // Cascade update nodes
-              const newNodes = appData.nodes.map(n => n.system === oldName ? { ...n, system: newName } : n);
-              const newData = { ...appData, systems: newSystems, nodes: newNodes };
-              setAppData(newData); saveDataToFirebase(newData); showNotification("System Renamed");
-              return;
-          }
-      }
-      const newData = { ...appData, systems: newSystems };
-      setAppData(newData); saveDataToFirebase(newData);
-  };
-  
-  const deleteSystem = (name) => {
-      confirmAction("Delete System?", `This will also impact nodes in ${name}.`, () => {
-          const newSystems = { ...appData.systems };
-          delete newSystems[name];
-          const newData = { ...appData, systems: newSystems };
-          setAppData(newData); saveDataToFirebase(newData); showNotification("System Deleted");
-      });
-  };
-
-  const addPlanet = (systemName, planetName) => {
-      const planets = appData.systems[systemName] || [];
-      // Normalize check: ensure not duping name (handle string vs object)
-      if (planets.some(p => (typeof p === 'string' ? p : p.name) === planetName)) return;
-      
-      const newPlanetObj = { name: planetName, environments: [], moons: [] };
-      const newSystems = { ...appData.systems, [systemName]: [...planets, newPlanetObj] };
-      const newData = { ...appData, systems: newSystems };
-      setAppData(newData); saveDataToFirebase(newData); showNotification("Planet Added");
-  };
-  
-  const deletePlanet = (systemName, planetName) => {
-      const planets = appData.systems[systemName] || [];
-      const newSystems = { ...appData.systems, [systemName]: planets.filter(p => (typeof p === 'string' ? p : p.name) !== planetName) };
-      const newData = { ...appData, systems: newSystems };
-      setAppData(newData); saveDataToFirebase(newData);
-  };
-  
-  const addEnvironment = (systemName, planetName, envName) => {
-      const planets = [...(appData.systems[systemName] || [])];
-      const pIndex = planets.findIndex(p => (typeof p === 'string' ? p : p.name) === planetName);
-      if (pIndex === -1) return;
-
-      // Convert string planet to object if needed
-      if (typeof planets[pIndex] === 'string') {
-          planets[pIndex] = { name: planets[pIndex], environments: [envName], moons: [] };
-      } else {
-          // Avoid dups
-          // FIX: Handle undefined environments property safely
-          const currentEnvs = planets[pIndex].environments || [];
-          if (!currentEnvs.includes(envName)) {
-              planets[pIndex] = { ...planets[pIndex], environments: [...currentEnvs, envName] };
-          }
-      }
-      
-      const newSystems = { ...appData.systems, [systemName]: planets };
-      const newData = { ...appData, systems: newSystems };
-      setAppData(newData); saveDataToFirebase(newData);
-  };
-  
-  const deleteEnvironment = (systemName, planetName, envName) => {
-      const planets = [...(appData.systems[systemName] || [])];
-      const pIndex = planets.findIndex(p => (typeof p === 'string' ? p : p.name) === planetName);
-      if (pIndex === -1 || typeof planets[pIndex] === 'string') return;
-      
-      // FIX: Handle undefined environments
-      const currentEnvs = planets[pIndex].environments || [];
-      planets[pIndex] = { ...planets[pIndex], environments: currentEnvs.filter(e => e !== envName) };
-      const newSystems = { ...appData.systems, [systemName]: planets };
-      const newData = { ...appData, systems: newSystems };
-      setAppData(newData); saveDataToFirebase(newData);
-  };
-
-  const addMoon = (systemName, planetName, moonName) => {
-      const planets = [...(appData.systems[systemName] || [])];
-      const pIndex = planets.findIndex(p => (typeof p === 'string' ? p : p.name) === planetName);
-      if (pIndex === -1) return;
-
-      const newMoonObj = { name: moonName, environments: [] };
-
-      if (typeof planets[pIndex] === 'string') {
-          planets[pIndex] = { name: planets[pIndex], environments: [], moons: [newMoonObj] };
-      } else {
-          if (!planets[pIndex].moons) planets[pIndex].moons = [];
-          // Check for existing moon
-          if (!planets[pIndex].moons.some(m => (typeof m === 'string' ? m : m.name) === moonName)) {
-              planets[pIndex] = { ...planets[pIndex], moons: [...planets[pIndex].moons, newMoonObj] };
-          }
-      }
-      
-      const newSystems = { ...appData.systems, [systemName]: planets };
-      const newData = { ...appData, systems: newSystems };
-      setAppData(newData); saveDataToFirebase(newData);
-  };
-
-  const deleteMoon = (systemName, planetName, moonName) => {
-      const planets = [...(appData.systems[systemName] || [])];
-      const pIndex = planets.findIndex(p => (typeof p === 'string' ? p : p.name) === planetName);
-      if (pIndex === -1 || typeof planets[pIndex] === 'string') return;
-      
-      if (planets[pIndex].moons) {
-          planets[pIndex] = { ...planets[pIndex], moons: planets[pIndex].moons.filter(m => (typeof m === 'string' ? m : m.name) !== moonName) };
-      }
-      const newSystems = { ...appData.systems, [systemName]: planets };
-      const newData = { ...appData, systems: newSystems };
-      setAppData(newData); saveDataToFirebase(newData);
-  };
-
-  const addMoonEnvironment = (systemName, planetName, moonName, envName) => {
-      const planets = [...(appData.systems[systemName] || [])];
-      const pIndex = planets.findIndex(p => (typeof p === 'string' ? p : p.name) === planetName);
-      if (pIndex === -1 || typeof planets[pIndex] === 'string') return;
-
-      const moons = [...(planets[pIndex].moons || [])];
-      const mIndex = moons.findIndex(m => (typeof m === 'string' ? m : m.name) === moonName);
-      if (mIndex === -1) return;
-
-      // Ensure moon is object
-      if (typeof moons[mIndex] === 'string') {
-          moons[mIndex] = { name: moons[mIndex], environments: [envName] };
-      } else {
-          if (!moons[mIndex].environments) moons[mIndex].environments = [];
-          if (!moons[mIndex].environments.includes(envName)) {
-              moons[mIndex] = { ...moons[mIndex], environments: [...moons[mIndex].environments, envName] };
-          }
-      }
-      
-      planets[pIndex] = { ...planets[pIndex], moons };
-      const newSystems = { ...appData.systems, [systemName]: planets };
-      const newData = { ...appData, systems: newSystems };
-      setAppData(newData); saveDataToFirebase(newData);
-  };
-
-  const deleteMoonEnvironment = (systemName, planetName, moonName, envName) => {
-      const planets = [...(appData.systems[systemName] || [])];
-      const pIndex = planets.findIndex(p => (typeof p === 'string' ? p : p.name) === planetName);
-      if (pIndex === -1 || typeof planets[pIndex] === 'string') return;
-
-      const moons = [...(planets[pIndex].moons || [])];
-      const mIndex = moons.findIndex(m => (typeof m === 'string' ? m : m.name) === moonName);
-      if (mIndex === -1 || typeof moons[mIndex] === 'string') return;
-
-      moons[mIndex] = { ...moons[mIndex], environments: moons[mIndex].environments.filter(e => e !== envName) };
-      
-      planets[pIndex] = { ...planets[pIndex], moons };
-      const newSystems = { ...appData.systems, [systemName]: planets };
-      const newData = { ...appData, systems: newSystems };
-      setAppData(newData); saveDataToFirebase(newData);
-  };
-
-  const updateResource = (id, updates) => { const newData = { ...appData, resources: appData.resources.map(r => r.id === id ? { ...r, ...updates } : r) }; setAppData(newData); saveDataToFirebase(newData); showNotification("Resource Updated"); };
-  const updateBlueprint = (id, updates) => { const newData = { ...appData, blueprints: appData.blueprints.map(b => b.id === id ? { ...b, ...updates } : b) }; setAppData(newData); saveDataToFirebase(newData); showNotification("Blueprint Updated"); };
-  const deleteBlueprint = (id) => { confirmAction("Delete Blueprint?", "Are you sure?", () => { const newData = { ...appData, blueprints: appData.blueprints.filter(b => b.id !== id) }; setAppData(newData); saveDataToFirebase(newData); showNotification("Blueprint deleted"); }); };
-  const deleteResource = (id) => { confirmAction("Delete Resource?", "This might break blueprints using it.", () => { const newData = { ...appData, resources: appData.resources.filter(r => r.id !== id) }; setAppData(newData); saveDataToFirebase(newData); showNotification("Resource deleted"); }); };
-  const addBlueprintToDb = (bp) => { const newData = { ...appData, blueprints: [...appData.blueprints, { ...bp, id: Date.now().toString() }] }; setAppData(newData); saveDataToFirebase(newData); setModalOpen(false); };
-  const addResourceToDb = (res) => { const id = res.name.toLowerCase().replace(/[^a-z0-9]/g, ''); const newData = { ...appData, resources: [...appData.resources, { ...res, id }] }; setAppData(newData); saveDataToFirebase(newData); setModalOpen(false); };
-  const updateCapacities = (newCaps) => { const newData = { ...appData, capacities: { ...appData.capacities, ...newCaps } }; setAppData(newData); saveDataToFirebase(newData); };
-
-  // --- RE-USED FORMS ---
-  const AddProjectForm = () => {
-      const [mode, setMode] = useState(editProjectData ? 'custom' : 'custom'); 
-      const [name, setName] = useState(editProjectData?.name || '');
-      const [type, setType] = useState(editProjectData?.type || 'Outpost');
-      const [priority, setPriority] = useState(editProjectData?.priority || 'STANDARD');
-      const [isExpedition, setIsExpedition] = useState(editProjectData?.isExpedition || false);
-      const [bpId, setBpId] = useState(appData.blueprints[0]?.id || '');
-      const [ings, setIngs] = useState(editProjectData ? editProjectData.ingredients : [{ resourceId: appData.resources[0]?.id || '', count: 1 }]);
-      const [filterType, setFilterType] = useState('All');
-      const types = ['All', ...new Set(appData.resources.map(r => r.type))].sort();
-
-      const handleSubmit = () => {
-          let finalIngs = ings;
-          let finalName = name;
-          if (!editProjectData && mode === 'blueprint') {
-              const bp = appData.blueprints.find(b => b.id === bpId);
-              if (bp) { finalIngs = bp.ingredients; finalName = `${bp.name} Project`; }
-          }
-          saveProject({ name: finalName, type, priority, isExpedition, ingredients: finalIngs });
-      };
-
+  const ConfirmationModal = () => {
+      if (!confirmModal) return null;
       return (
-          <div className="space-y-4">
-              <h3 className="text-lg font-bold">{editProjectData ? 'Edit Project' : 'New Project'}</h3>
-              {!editProjectData && (<div className="flex gap-2 mb-4"><Button size="sm" theme={theme} variant={mode === 'custom' ? 'primary' : 'secondary'} onClick={() => setMode('custom')}>Custom</Button><Button size="sm" theme={theme} variant={mode === 'blueprint' ? 'primary' : 'secondary'} onClick={() => setMode('blueprint')}>Blueprint</Button></div>)}
-              {mode === 'custom' && <Input theme={theme} label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Outpost Hab 1" />}
-              {mode === 'blueprint' && !editProjectData && <div className="space-y-2"><label className="text-xs font-bold uppercase opacity-70">Blueprint</label><select value={bpId} onChange={(e) => setBpId(e.target.value)} className={`w-full p-2 rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>{appData.blueprints.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>}
-              <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1"><label className="text-xs font-bold uppercase opacity-70">Type</label><select value={type} onChange={(e) => setType(e.target.value)} className={`w-full p-2 rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>{PROJECT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-                  <div className="space-y-1"><label className="text-xs font-bold uppercase opacity-70">Priority</label><select value={priority} onChange={(e) => setPriority(e.target.value)} className={`w-full p-2 rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>{Object.keys(PRIORITIES).map(k => <option key={k} value={k}>{PRIORITIES[k].label}</option>)}</select></div>
-              </div>
-              <div className="flex items-center gap-2 py-2"><input type="checkbox" checked={isExpedition} onChange={(e) => setIsExpedition(e.target.checked)} className="w-5 h-5 rounded" /><span className="text-sm font-bold">Expedition Essential</span></div>
-              {mode === 'custom' && (
-                  <div className="space-y-2">
-                      <div className="flex justify-between items-center"><label className="text-xs font-bold uppercase opacity-70">Resources Needed</label><select value={filterType} onChange={(e) => setFilterType(e.target.value)} className={`text-xs p-1 rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>{types.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-                      {ings.map((ing, i) => {
-                          const currentRes = appData.resources.find(r => r.id === ing.resourceId);
-                          const availableOptions = appData.resources.filter(r => filterType === 'All' || r.type === filterType);
-                          const showCurrent = currentRes && !availableOptions.find(r => r.id === currentRes.id);
-                          
-                          return (
-                              <div key={i} className="flex gap-2">
-                                  <select value={ing.resourceId} onChange={(e) => { const n = [...ings]; n[i].resourceId = e.target.value; setIngs(n); }} className={`flex-1 p-2 rounded text-sm ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>
-                                      {showCurrent && <option value={currentRes.id}>{currentRes.name}</option>}
-                                      {availableOptions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                                  </select>
-                                  <input type="number" min="1" value={ing.count} onChange={(e) => { const n = [...ings]; n[i].count = parseInt(e.target.value); setIngs(n); }} className={`w-20 p-2 rounded text-sm ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`} />
-                                  <Button theme={theme} variant="danger" size="sm" onClick={() => setIngs(ings.filter((_, idx) => idx !== i))}><Trash2 size={12}/></Button>
-                              </div>
-                          )
-                      })}
-                      <Button theme={theme} variant="secondary" size="sm" onClick={() => setIngs([...ings, {resourceId: appData.resources[0]?.id || '', count:1}])}><Plus size={12}/> Add Line</Button>
-                  </div>
-              )}
-              <div className="flex justify-end gap-2 mt-4"><Button theme={theme} variant="ghost" onClick={() => { setModalOpen(false); setEditProjectData(null); }}>Cancel</Button><Button theme={theme} onClick={handleSubmit}>{editProjectData ? 'Update' : 'Create'}</Button></div>
-          </div>
-      );
-  };
-  
-  const AddNodeForm = () => {
-      const [name, setName] = useState(editNodeData?.name || '');
-      const [system, setSystem] = useState(editNodeData?.system || (Object.keys(appData.systems).length > 0 ? Object.keys(appData.systems)[0] : 'Sol'));
-      const [planet, setPlanet] = useState(editNodeData?.planet || '');
-      const [environment, setEnvironment] = useState(editNodeData?.environment || '');
-      
-      const [customSystem, setCustomSystem] = useState('');
-      const [customPlanet, setCustomPlanet] = useState('');
-      const [isAddingSystem, setIsAddingSystem] = useState(false);
-      const [isAddingPlanet, setIsAddingPlanet] = useState(false);
-
-      const [type, setType] = useState(editNodeData?.type || 'Outpost');
-      const [selectedRes, setSelectedRes] = useState(editNodeData?.resources || []);
-      const [filterType, setFilterType] = useState('All');
-      const types = ['All', ...new Set(appData.resources.map(r => r.type))].sort();
-
-      const toggleRes = (id) => {
-          if (selectedRes.includes(id)) setSelectedRes(selectedRes.filter(r => r !== id));
-          else setSelectedRes([...selectedRes, id]);
-      };
-
-      const handleSubmit = () => {
-          let finalSystem = system;
-          let finalPlanet = planet;
-          
-          if (isAddingSystem && customSystem) {
-              addSystem(customSystem);
-              finalSystem = customSystem;
-          }
-          if (isAddingPlanet && customPlanet) {
-              addPlanet(finalSystem, customPlanet);
-              finalPlanet = customPlanet;
-          }
-
-          if (editNodeData) updateNode(editNodeData.id, { name, system: finalSystem, planet: finalPlanet, environment, type, resources: selectedRes });
-          else addNode({ name, system: finalSystem, planet: finalPlanet, environment, type, resources: selectedRes });
-      };
-
-      const filteredRes = appData.resources.filter(r => filterType === 'All' || r.type === filterType);
-      
-      // Get Planet/Moon Details
-      const availablePlanets = appData.systems[system] || [];
-      
-      // Helper to find envs for selected planet/moon
-      let availableEnvs = [];
-      // 1. Is it a planet object directly?
-      const planetObj = availablePlanets.find(p => (typeof p === 'string' ? p : p.name) === planet);
-      if (planetObj && typeof planetObj !== 'string') {
-          // If we selected a planet, use its environments
-          // BUT check if the 'planet' state is actually a moon name...
-          // The dropdown values are tricky. Let's trace.
-          // Dropdown puts planet name as value, and moon name as value.
-          // So 'planet' state holds the name.
-          if (planetObj.name === planet) {
-             availableEnvs = planetObj.environments || [];
-          }
-      }
-      
-      // 2. Is it a moon?
-      // Iterate all planets to find if 'planet' state is actually a moon
-      availablePlanets.forEach(p => {
-          const pMoons = typeof p === 'string' ? [] : (p.moons || []);
-          const foundMoon = pMoons.find(m => (typeof m === 'string' ? m : m.name) === planet);
-          if (foundMoon && typeof foundMoon !== 'string') {
-              availableEnvs = foundMoon.environments || [];
-          }
-      });
-
-      useEffect(() => {
-          // Auto select if list changes
-          let allLocations = [];
-          availablePlanets.forEach(p => {
-              const pName = typeof p === 'string' ? p : p.name;
-              allLocations.push(pName);
-              const moons = typeof p === 'string' ? [] : (p.moons || []);
-              moons.forEach(m => allLocations.push(typeof m === 'string' ? m : m.name));
-          });
-          
-          if (system && !isAddingSystem && !allLocations.includes(planet)) {
-             if (allLocations.length > 0) setPlanet(allLocations[0]);
-             else setPlanet('');
-          }
-      }, [system, availablePlanets]);
-
-      return (
-          <div className="space-y-4">
-              <h3 className="text-lg font-bold">{editNodeData ? 'Edit Node' : 'New Node'}</h3>
-              <Input theme={theme} label="Name (Optional - Auto generates)" value={name} onChange={(e) => setName(e.target.value)} placeholder={`${planet || 'Planet'} ${type || 'Node'}`} />
-              
-              <div className="flex gap-2">
-                  <div className="flex-1">
-                      <label className="text-xs font-bold uppercase opacity-70">System</label>
-                      {isAddingSystem ? (
-                          <div className="flex gap-1">
-                              <Input className="flex-1" theme={theme} value={customSystem} onChange={(e) => setCustomSystem(e.target.value)} placeholder="New System Name" />
-                              <button onClick={() => setIsAddingSystem(false)} className="p-2"><X size={14}/></button>
-                          </div>
-                      ) : (
-                          <select value={system} onChange={(e) => { 
-                              if(e.target.value === '__NEW__') { setIsAddingSystem(true); setSystem(''); } else { setSystem(e.target.value); }
-                          }} className={`w-full p-2 mt-1 rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>
-                              {Object.keys(appData.systems).sort().map(s => <option key={s} value={s}>{s}</option>)}
-                              <option value="__NEW__">+ Discover New System</option>
-                          </select>
-                      )}
-                  </div>
-                  <div className="flex-1">
-                      <label className="text-xs font-bold uppercase opacity-70">Planet/Moon</label>
-                      {isAddingPlanet || isAddingSystem ? (
-                          <div className="flex gap-1">
-                              <Input className="flex-1" theme={theme} value={customPlanet} onChange={(e) => setCustomPlanet(e.target.value)} placeholder="New Planet Name" />
-                              {!isAddingSystem && <button onClick={() => setIsAddingPlanet(false)} className="p-2"><X size={14}/></button>}
-                          </div>
-                      ) : (
-                          <select value={planet} onChange={(e) => {
-                              if(e.target.value === '__NEW__') { setIsAddingPlanet(true); setPlanet(''); } else { setPlanet(e.target.value); }
-                          }} className={`w-full p-2 mt-1 rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>
-                              {availablePlanets.map(p => {
-                                  const pName = typeof p === 'string' ? p : p.name;
-                                  const pMoons = typeof p === 'string' ? [] : (p.moons || []);
-                                  return (
-                                    <React.Fragment key={pName}>
-                                        <option value={pName}>{pName}</option>
-                                        {pMoons.map(m => {
-                                            const mName = typeof m === 'string' ? m : m.name;
-                                            return <option key={mName} value={mName}>&nbsp;&nbsp;↳ {mName}</option>
-                                        })}
-                                    </React.Fragment>
-                                  )
-                              })}
-                              <option value="__NEW__">+ Discover New Planet</option>
-                          </select>
-                      )}
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200">
+              <div className="bg-slate-900 w-full max-w-sm rounded-2xl border border-slate-800 p-6 shadow-2xl text-center">
+                  <div className="w-12 h-12 bg-indigo-900/30 text-indigo-400 rounded-full flex items-center justify-center mx-auto mb-4"><AlertTriangle size={24} /></div>
+                  <h3 className="text-lg font-bold text-white mb-2">Confirm Action</h3>
+                  <p className="text-slate-400 text-sm mb-6">{confirmModal.message}</p>
+                  <div className="flex gap-3">
+                      <button onClick={() => setConfirmModal(null)} className="flex-1 py-3 text-slate-400 font-bold hover:bg-slate-800 rounded-xl">Cancel</button>
+                      <button onClick={() => { confirmModal.onConfirm(); setConfirmModal(null); }} className="flex-1 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-500">Confirm</button>
                   </div>
               </div>
-              
-              <div className="flex gap-2">
-                 <div className="flex-1"><label className="text-xs font-bold uppercase opacity-70">Type</label><select value={type} onChange={(e) => setType(e.target.value)} className={`w-full p-2 rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>{LOCATION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-                 <div className="flex-1">
-                      <label className="text-xs font-bold uppercase opacity-70">Environment</label>
-                      {availableEnvs.length > 0 ? (
-                          <select value={environment} onChange={(e) => setEnvironment(e.target.value)} className={`w-full p-2 rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>
-                              <option value="">(None)</option>
-                              {availableEnvs.map(e => <option key={e} value={e}>{e}</option>)}
-                              <option value="__MANUAL__">Manual Entry...</option>
-                          </select>
-                      ) : (
-                         <Input theme={theme} value={environment} onChange={(e) => setEnvironment(e.target.value)} placeholder="e.g. Craters" />
-                      )}
-                      {environment === '__MANUAL__' && <Input theme={theme} value="" onChange={(e) => setEnvironment(e.target.value)} placeholder="Type Env..." className="mt-1" />}
-                 </div>
-              </div>
-              
-              <div className="space-y-2">
-                  <div className="flex justify-between items-center"><label className="text-xs font-bold uppercase opacity-70">Available Resources</label><select value={filterType} onChange={(e) => setFilterType(e.target.value)} className={`text-xs p-1 rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>{types.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-                  <div className={`grid grid-cols-3 gap-2 h-40 overflow-y-auto p-2 rounded ${theme==='cockpit'?'bg-slate-900 border border-slate-800':'bg-slate-50 border border-slate-200'}`}>
-                      {filteredRes.map(r => (
-                          <div key={r.id} onClick={() => toggleRes(r.id)} className={`text-[10px] p-2 rounded cursor-pointer border ${selectedRes.includes(r.id) ? (theme==='cockpit'?'bg-amber-600 text-black border-amber-600':'bg-blue-600 text-white border-blue-600') : 'opacity-60 hover:opacity-100'}`}>
-                              {r.name}
-                          </div>
-                      ))}
-                  </div>
-              </div>
-              <div className="flex justify-end gap-2 mt-4"><Button theme={theme} variant="ghost" onClick={() => { setModalOpen(false); setEditNodeData(null); }}>Cancel</Button><Button theme={theme} onClick={handleSubmit}>{editNodeData ? 'Update' : 'Track'}</Button></div>
-          </div>
-      );
-  };
-  
-  const BlueprintForm = ({ initialData, isEdit }) => {
-      const [name, setName] = useState(initialData?.name || '');
-      const [category, setCategory] = useState(initialData?.category || 'Crafting');
-      const [customCat, setCustomCat] = useState('');
-      const [isCustomCat, setIsCustomCat] = useState(false);
-      const [ings, setIngs] = useState(initialData?.ingredients || [{ resourceId: appData.resources[0]?.id || '', count: 1 }]);
-      
-      const [resFilter, setResFilter] = useState('All');
-      const resTypes = ['All', ...new Set(appData.resources.map(r => r.type))].sort();
-      
-      const existingCats = ['Crafting', 'Power', 'Defense', 'Furniture', 'Structure', 'Storage', 'Extraction', 'Base', ...new Set(appData.blueprints.map(b => b.category))];
-      const uniqueCats = [...new Set(existingCats)].sort();
-
-      const handleSave = () => { 
-          const finalCat = isCustomCat ? customCat : category;
-          if (isEdit) { updateBlueprint(initialData.id, { name, category: finalCat, ingredients: ings }); setModalOpen(false); } 
-          else { addBlueprintToDb({ name, category: finalCat, ingredients: ings }); } 
-      };
-      
-      return (
-          <div className="space-y-4">
-              <h3 className="text-lg font-bold">{isEdit ? 'Edit Blueprint' : 'New Blueprint'}</h3>
-              <Input theme={theme} label="Name" value={name} onChange={(e) => setName(e.target.value)} />
-              
-              <div className="space-y-1">
-                  <label className="text-xs font-bold uppercase opacity-70">Category</label>
-                  {!isCustomCat ? (
-                      <div className="flex gap-2">
-                          <select value={category} onChange={(e) => setCategory(e.target.value)} className={`flex-1 p-2 rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>
-                              {uniqueCats.map(c => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                          <Button theme={theme} onClick={() => setIsCustomCat(true)}><Plus size={14}/></Button>
-                      </div>
-                  ) : (
-                      <div className="flex gap-2">
-                          <Input className="flex-1" theme={theme} value={customCat} onChange={(e) => setCustomCat(e.target.value)} placeholder="New Category Name" />
-                          <Button theme={theme} onClick={() => setIsCustomCat(false)}><X size={14}/></Button>
-                      </div>
-                  )}
-              </div>
-
-              <div className="space-y-2">
-                  <div className="flex justify-between items-center"><label className="text-xs font-bold uppercase opacity-70">Ingredients</label><select value={resFilter} onChange={(e) => setResFilter(e.target.value)} className={`text-xs p-1 rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>{resTypes.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-                  {ings.map((ing, idx) => {
-                      const currentRes = appData.resources.find(r => r.id === ing.resourceId);
-                      const availableOptions = appData.resources.filter(r => resFilter === 'All' || r.type === resFilter);
-                      const showCurrent = currentRes && !availableOptions.find(r => r.id === currentRes.id);
-                      
-                      return (
-                          <div key={idx} className="flex gap-2">
-                              <select value={ing.resourceId} onChange={(e) => { const n=[...ings]; n[idx].resourceId=e.target.value; setIngs(n); }} className={`flex-1 p-2 text-xs rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>
-                                  {showCurrent && <option value={currentRes.id}>{currentRes.name}</option>}
-                                  {availableOptions.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                              </select>
-                              <input type="number" className={`w-16 p-2 text-xs rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`} value={ing.count} onChange={(e) => { const n=[...ings]; n[idx].count=parseInt(e.target.value); setIngs(n); }} />
-                              <button onClick={() => setIngs(ings.filter((_,i) => i!==idx))} className="text-red-500"><Trash2 size={16}/></button>
-                          </div>
-                      )
-                  })}
-                  <Button theme={theme} size="sm" variant="secondary" onClick={() => setIngs([...ings, {resourceId: appData.resources[0]?.id || '', count: 1}])}><Plus size={12}/> Add</Button>
-              </div>
-              <div className="flex justify-end gap-2 mt-4"><Button theme={theme} variant="ghost" onClick={() => setModalOpen(false)}>Cancel</Button><Button theme={theme} onClick={handleSave}>Save</Button></div>
           </div>
       );
   };
 
-  const AddResourceForm = () => { const [data, setData] = useState({ name: '', type: 'Raw Inorganic', mass: 1, value: 10 }); return (<div className="space-y-3"><h3 className="text-lg font-bold">New Resource Definition</h3><Input theme={theme} label="Name" value={data.name} onChange={(e) => setData({...data, name: e.target.value})} /><div className="flex gap-2"><div className="flex-1"><label className="text-xs font-bold uppercase opacity-70">Type</label><select value={data.type} onChange={(e) => setData({...data, type: e.target.value})} className={`w-full p-2 mt-1 rounded ${theme==='cockpit'?'bg-slate-900 border-amber-700':'bg-white border-slate-300'}`}>{['Raw Inorganic', 'Organic', 'Flora', 'Ingot', 'Manufactured', 'Exotic'].map(t => <option key={t} value={t}>{t}</option>)}</select></div><Input className="flex-1" theme={theme} type="number" label="Mass" value={data.mass} onChange={(e) => setData({...data, mass: parseFloat(e.target.value)})} /><Input className="flex-1" theme={theme} type="number" label="Value" value={data.value} onChange={(e) => setData({...data, value: parseInt(e.target.value)})} /></div><div className="flex justify-end gap-2 mt-4"><Button theme={theme} variant="ghost" onClick={() => setModalOpen(false)}>Cancel</Button><Button theme={theme} onClick={() => addResourceToDb(data)}>Save</Button></div></div>); };
-
-  if (loading) return <div className={`min-h-screen flex items-center justify-center ${theme === 'cockpit' ? 'bg-slate-950 text-amber-500' : 'bg-slate-50 text-slate-800'}`}><Loader2 size={48} className="animate-spin" /></div>;
-  const themeClasses = theme === 'cockpit' ? "bg-slate-950 text-amber-500 font-mono" : "bg-slate-50 text-slate-800 font-sans";
+  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-slate-950 text-indigo-500"><Loader2 className="animate-spin" size={48}/></div>;
 
   if (!user) return <LoginView onLogin={loginWithGoogle} />;
 
   return (
-    <div className={`min-h-screen flex flex-col transition-colors duration-500 ${themeClasses}`}>
-      <header className={`p-4 border-b flex justify-between items-center sticky top-0 z-20 backdrop-blur-md ${theme === 'cockpit' ? 'bg-slate-950/90 border-amber-900/50' : 'bg-white/90 border-slate-200'}`}><div className="flex items-center gap-2"><Zap size={20} className={theme==='cockpit'?'text-amber-400':'text-blue-600'} /><h1 className="font-bold tracking-widest uppercase text-sm md:text-base">Starfield Logistics<span className="opacity-50 ml-1 text-[10px]">Starvival Edition</span></h1></div><button onClick={() => setTheme(prev => prev === 'cockpit' ? 'clean' : 'cockpit')} className="p-2 rounded-full hover:bg-current/10 transition-colors">{theme === 'cockpit' ? <Sun size={18} /> : <Moon size={18} />}</button></header>
-      <main className="flex-1 p-4 md:p-6 w-full max-w-4xl mx-auto">
-        {activeTab === 'overview' && <OverviewView appData={appData} theme={theme} setActiveTab={setActiveTab} />}
-        {activeTab === 'projects' && <ProjectsView appData={appData} theme={theme} setModalOpen={setModalOpen} setModalType={setModalType} setEditProjectData={setEditProjectData} deleteProject={deleteProject} completeProject={completeProject} />}
-        {activeTab === 'manifest' && <ManifestView appData={appData} theme={theme} handleLoot={handleLoot} handleStashUpdate={handleStashUpdate} />}
-        {activeTab === 'nodes' && <NodesView appData={appData} theme={theme} setModalOpen={setModalOpen} setModalType={setModalType} setEditNodeData={setEditNodeData} deleteNode={deleteNode} />}
-        {activeTab === 'database' && <DatabaseViewWrapper appData={appData} theme={theme} setModalOpen={setModalOpen} setModalType={setModalType} setEditBlueprintData={setEditBlueprintData} updateResource={updateResource} updateBlueprint={updateBlueprint} deleteBlueprint={deleteBlueprint} deleteResource={deleteResource} renameSystem={renameSystem} deleteSystem={deleteSystem} addPlanet={addPlanet} deletePlanet={deletePlanet} addEnvironment={addEnvironment} deleteEnvironment={deleteEnvironment} addMoon={addMoon} deleteMoon={deleteMoon} addMoonEnvironment={addMoonEnvironment} deleteMoonEnvironment={deleteMoonEnvironment} />}
-        {activeTab === 'settings' && <SettingsView appData={appData} theme={theme} updateCapacities={updateCapacities} confirmAction={confirmAction} saveDataToFirebase={saveDataToFirebase} setAppData={setAppData} showNotification={showNotification} exportData={exportData} importData={importData} softReset={softReset} updateDbToMaster={updateDbToMaster} user={user} />}
-      </main>
-      {notification && <div className="fixed top-20 right-4 z-50 animate-in slide-in-from-right duration-300"><div className={`px-4 py-3 rounded shadow-lg flex items-center gap-2 ${theme==='cockpit'?'bg-amber-900 text-amber-100 border border-amber-500':'bg-slate-800 text-white'}`}><Check size={16} /> {notification}</div></div>}
-      <nav className={`fixed bottom-0 w-full border-t pb-safe pt-2 px-2 flex justify-around z-30 backdrop-blur-md ${theme === 'cockpit' ? 'bg-slate-950/95 border-amber-900/50' : 'bg-white/95 border-slate-200'}`}>
-        {[{ id: 'overview', icon: Activity, label: 'Dash' }, { id: 'projects', icon: Hammer, label: 'Proj' }, { id: 'manifest', icon: ShoppingCart, label: 'Loot' }, { id: 'nodes', icon: MapPin, label: 'Nodes' }, { id: 'database', icon: Database, label: 'Db' }, { id: 'settings', icon: Settings, label: 'Sys' }].map(tab => (<button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center p-2 rounded-lg transition-all min-w-[50px] ${activeTab === tab.id ? (theme === 'cockpit' ? 'text-amber-400 bg-amber-900/20 -translate-y-1' : 'text-blue-600 bg-blue-50 -translate-y-1') : (theme === 'cockpit' ? 'text-amber-800' : 'text-slate-400')}`}><tab.icon size={20} /><span className="text-[9px] uppercase font-bold mt-1 tracking-wider">{tab.label}</span></button>))}
-      </nav>
-      {modalOpen && <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"><div className={`w-full max-w-lg p-6 rounded-xl shadow-2xl relative ${theme === 'cockpit' ? 'bg-slate-950 border border-amber-600 text-amber-50' : 'bg-white text-slate-800'}`}><button onClick={() => setModalOpen(false)} className="absolute top-4 right-4 opacity-50 hover:opacity-100"><Plus size={24} className="rotate-45"/></button>{modalType === 'addProject' && <AddProjectForm />}{modalType === 'addResource' && <AddResourceForm />}{modalType === 'addBlueprint' && <BlueprintForm isEdit={false} />}{modalType === 'editBlueprint' && <BlueprintForm initialData={editBlueprintData} isEdit={true} />}{modalType === 'addNode' && <AddNodeForm />}</div></div>}
-      <ConfirmModal isOpen={confirmState.isOpen} title={confirmState.title} message={confirmState.message} onConfirm={confirmState.onConfirm} onCancel={() => setConfirmState(prev => ({...prev, isOpen: false}))} theme={theme} />
-      {theme === 'cockpit' && <div className="pointer-events-none fixed inset-0 z-40 bg-[linear-gradient(rgba(18,16,10,0)_50%,rgba(0,0,0,0.1)_50%)] bg-[length:100%_4px] opacity-20" />}
+    <div className="bg-slate-950 min-h-screen text-slate-200 font-sans selection:bg-indigo-500 selection:text-white safe-area-pb">
+      <ActiveSessionBar session={activeSession} gameTitle={games.find(g => g.id === activeSession?.gameId)?.title} elapsedTime={elapsedTime} onPause={handlePauseSession} onResume={handleResumeSession} onStop={() => handleStopSession()} />
+      
+      {view === 'overview' && <OverviewView games={games} logs={logs} stats={stats} calendarDate={calendarDate} setCalendarDate={setCalendarDate} onDayClick={(date, logs) => setSelectedDateLogs({ date, logs })} setView={setView} setActiveGameId={setActiveGameId} onOpenSettings={() => setShowSettingsModal(true)} user={user} />}
+      
+      {view === 'journal' && <JournalView logs={logs} games={games} onEdit={(log) => { setEditingLog(log); setActiveGameId(log.gameId); setShowLogModal(true); }} onDelete={deleteLog} setView={setView} setActiveGameId={setActiveGameId} />}
+      
+      {view === 'library' && <LibraryView games={games} logs={logs} setView={setView} setActiveGameId={setActiveGameId} search={libSearch} setSearch={setLibSearch} sort={libSort} setSort={setLibSort} filter={libFilter} setFilter={setLibFilter} />}
+      
+      {view === 'game-detail' && <GameDetailView activeGame={activeGame} logs={logs} activeSession={activeSession} setView={setView} setShowEditGameModal={setShowEditGameModal} updateGame={updateGame} handleStartSession={handleStartSession} handlePauseSession={handlePauseSession} handleResumeSession={handleResumeSession} handleStopSession={handleStopSession} setEditingLog={setEditingLog} setShowLogModal={setShowLogModal} deleteGame={deleteGame} onDeleteLog={deleteLog} requestConfirm={requestConfirm} />}
+      
+      {/* NavBar is now outside of view conditions to be persistent */}
+      <NavBar view={view} setView={setView} onAdd={() => setShowAddModal(true)} />
+
+      {/* MODALS */}
+      <ConfirmationModal />
+      
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-800 p-6 shadow-2xl">
+            <h2 className="text-xl font-black text-white mb-4">Add to Library</h2>
+            <form onSubmit={addGame} className="space-y-4">
+              <input name="title" autoFocus placeholder="Game Title..." className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-white outline-none focus:border-indigo-500" required />
+              <div className="grid grid-cols-2 gap-3">
+                  <div className="relative">
+                      <select name="platform" defaultValue="PC" className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-white outline-none focus:border-indigo-500 appearance-none">
+                          {PLATFORMS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                      </select>
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500"><ChevronRight className="rotate-90" size={16} /></div>
+                  </div>
+                  <div className="relative">
+                      <select name="status" defaultValue="backlog" className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-white outline-none focus:border-indigo-500 appearance-none">
+                          <option value="backlog">Backlog</option>
+                          <option value="playing">Playing</option>
+                          <option value="completed">Completed</option>
+                          <option value="shelved">Shelved</option>
+                      </select>
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500"><ChevronRight className="rotate-90" size={16} /></div>
+                  </div>
+              </div>
+              <div className="flex gap-2">
+                 <input name="coverUrl" placeholder="Cover Art URL..." className="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-4 text-white outline-none focus:border-indigo-500" />
+                 <button type="button" onClick={() => {
+                    const title = (document.querySelector('input[name="title"]')).value;
+                    if(title) window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(title + " box art")}`, '_blank');
+                 }} className="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white px-4 rounded-xl flex items-center justify-center transition-colors"><Search size={20}/></button>
+              </div>
+              <div className="flex gap-2">
+                 <input name="linkUrl" placeholder="Wiki / Guide URL (Optional)..." className="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-4 text-white outline-none focus:border-indigo-500" />
+                 <button type="button" onClick={() => {
+                    const title = (document.querySelector('input[name="title"]')).value;
+                    if(title) window.open(`https://www.google.com/search?q=${encodeURIComponent(title + " wiki")}`, '_blank');
+                 }} className="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white px-4 rounded-xl flex items-center justify-center transition-colors"><Search size={20}/></button>
+              </div>
+              <div className="flex gap-3"><button type="button" onClick={() => setShowAddModal(false)} className="flex-1 py-3 text-slate-400 font-bold">Cancel</button><button type="submit" className="flex-1 bg-white text-black rounded-xl font-bold py-3">Add Game</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showEditGameModal && activeGame && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-800 p-6 shadow-2xl">
+            <div className="flex justify-between mb-4"><h2 className="text-xl font-black text-white">Edit Details</h2><button type="button" onClick={() => deleteGame(activeGame.id)} className="text-red-500 text-xs flex items-center gap-1"><Trash2 size={12}/> Delete</button></div>
+            <form onSubmit={(e) => {
+               e.preventDefault();
+               const fd = new FormData(e.target);
+               const updates = { title: fd.get('title'), platform: fd.get('platform'), status: fd.get('status'), coverUrl: fd.get('coverUrl'), linkUrl: fd.get('linkUrl') };
+               if(updates.status === 'completed' && activeGame.status !== 'completed') updates.completedDate = new Date().toISOString();
+               updateGame(activeGame.id, updates);
+               setShowEditGameModal(false);
+            }} className="space-y-4">
+               <div><label className="text-[10px] font-bold text-slate-500">Title</label><input name="title" defaultValue={activeGame.title} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-indigo-500" /></div>
+               <div className="grid grid-cols-2 gap-3">
+                   <div><label className="text-[10px] font-bold text-slate-500">Platform</label><div className="relative"><select name="platform" defaultValue={activeGame.platform} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-indigo-500 appearance-none">{PLATFORMS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}</select><div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500"><ChevronRight className="rotate-90" size={14} /></div></div></div>
+                   <div><label className="text-[10px] font-bold text-slate-500">Status</label><div className="relative"><select name="status" defaultValue={activeGame.status} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-indigo-500 appearance-none"><option value="backlog">Backlog</option><option value="playing">Playing</option><option value="completed">Completed</option><option value="shelved">Shelved</option></select><div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500"><ChevronRight className="rotate-90" size={14} /></div></div></div>
+               </div>
+               <div>
+                  <label className="text-[10px] font-bold text-slate-500">Cover URL</label>
+                  <div className="flex gap-2">
+                      <input name="coverUrl" defaultValue={activeGame.coverUrl} className="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-indigo-500" />
+                      <button type="button" onClick={() => {
+                        const title = (document.querySelector('input[name="title"]')).value;
+                        if(title) window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(title + " box art")}`, '_blank');
+                     }} className="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white px-3 rounded-xl flex items-center justify-center transition-colors"><Search size={18}/></button>
+                  </div>
+               </div>
+               <div>
+                  <label className="text-[10px] font-bold text-slate-500">Wiki / Guide URL</label>
+                  <div className="flex gap-2">
+                      <input name="linkUrl" defaultValue={activeGame.linkUrl} className="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-indigo-500" />
+                      <button type="button" onClick={() => {
+                         const title = (document.querySelector('input[name="title"]')).value;
+                         if(title) window.open(`https://www.google.com/search?q=${encodeURIComponent(title + " wiki")}`, '_blank');
+                      }} className="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white px-3 rounded-xl flex items-center justify-center transition-colors"><Search size={18}/></button>
+                  </div>
+               </div>
+               <div className="flex gap-3 mt-4"><button type="button" onClick={() => setShowEditGameModal(false)} className="flex-1 py-3 text-slate-400 font-bold">Cancel</button><button type="submit" className="flex-1 bg-indigo-600 text-white rounded-xl font-bold">Save</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showLogModal && <LogEntryModal />}
+
+      {showSettingsModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 w-full max-w-sm rounded-2xl border border-slate-800 p-6 shadow-2xl">
+            <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-black text-white">Settings</h2><button onClick={() => setShowSettingsModal(false)}><X size={20} className="text-slate-500 hover:text-white" /></button></div>
+            <div className="space-y-3">
+               <div className="w-full bg-emerald-900/20 border border-emerald-900/50 text-emerald-400 p-4 rounded-xl flex items-center gap-3">
+                  <Cloud size={24} />
+                  <div>
+                    <div className="font-bold text-sm">Sync Active</div>
+                    <div className="text-[10px] opacity-75">Logged in as {user.email}</div>
+                  </div>
+               </div>
+               
+               <button onClick={() => {
+                  const data = { games, logs };
+                   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                   const url = URL.createObjectURL(blob);
+                   const a = document.createElement('a');
+                   a.href = url;
+                   a.download = `orbit_backup_${new Date().toISOString().slice(0,10)}.json`;
+                   a.click();
+               }} className="w-full bg-slate-800 hover:bg-slate-700 text-white p-4 rounded-xl flex items-center justify-between group"><div className="flex items-center gap-3"><Download size={20} className="text-indigo-400" /><div className="text-left"><div className="font-bold">Download Data</div><div className="text-[10px] text-slate-500">Save JSON backup</div></div></div></button>
+
+               <button onClick={handleSignOut} className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white p-4 rounded-xl flex items-center justify-between group mt-2">
+                   <div className="flex items-center gap-3"><LogOut size={20} /><div className="font-bold">Sign Out</div></div>
+               </button>
+            </div>
+            <div className="mt-6 text-center text-xs text-slate-600">Orbital v15.0 (Google Sync)</div>
+          </div>
+        </div>
+      )}
+
+      {selectedDateLogs && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-800 p-6 shadow-2xl max-h-[80vh] flex flex-col">
+            <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-white uppercase tracking-wide">{selectedDateLogs.date.toLocaleDateString()}</h2><button onClick={() => setSelectedDateLogs(null)} className="text-slate-500 hover:text-white"><X size={20} /></button></div>
+            <div className="overflow-y-auto space-y-3 pr-2">
+              {selectedDateLogs.logs.map(log => {
+                 const game = games.find(g => g.id === log.gameId);
+                 return (
+                  <div key={log.id} className="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                    <div className="flex justify-between items-baseline mb-1"><span className="font-bold text-indigo-400 text-sm">{game?.title}</span><span className="text-[10px] text-slate-500">{formatDuration(log.durationMinutes)}</span></div>
+                    <div className="flex gap-1 flex-wrap mb-2">
+                        {log.tags && log.tags.map(t => <span key={t} className={`text-[10px] px-1.5 py-0.5 rounded border ${TAG_COLORS[t] || TAG_COLORS.Idle}`}>{t}</span>)}
+                    </div>
+                    <p className="text-sm text-slate-300 whitespace-pre-wrap">{log.content}</p>
+                    <div className="flex gap-2 justify-end mt-2"><button type="button" onClick={() => { setEditingLog(log); setShowLogModal(true); }} className="text-slate-500 text-xs hover:text-white">Edit</button><button type="button" onClick={() => deleteLog(log.id)} className="text-slate-500 text-xs hover:text-red-500">Delete</button></div>
+                  </div>
+                 );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
